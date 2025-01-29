@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import API_KEY from "../store";
 
 // eslint-disable-next-line react/prop-types
 export default function StopSearch({ onSelect }) {

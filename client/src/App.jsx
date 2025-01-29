@@ -1,6 +1,7 @@
 import { useState } from "react";
 import MBTA from "mbta-client";
 import Arrivals from "./component/Arrivals";
+import Test from "./component/Test";
 import StopSearch from "./component/StopSearch";
 import { CookiesProvider, useCookies } from "react-cookie";
 
@@ -50,9 +51,10 @@ function App() {
 				<div className="font-2xl" onClick={() => getPredictions()}>
 					TESTING
 				</div>
-				{times ? <Arrivals times={times} /> : "NoStopsFound"}
+				<Test />
+				{/* {times ? <Arrivals times={times} /> : "NoStopsFound"}
 				{!viewSelector && <h1 onClick={() => setViewSelector(true)}>Add a New Station</h1>}
-				{viewSelector && <StopSearch onSelect={handleSelect} />}
+				{viewSelector && <StopSearch onSelect={handleSelect} />} */}
 			</div>
 		</CookiesProvider>
 	);
