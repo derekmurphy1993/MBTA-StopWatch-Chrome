@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import API_KEY from "../store";
 
 // eslint-disable-next-line react/prop-types
 export default function StopSearch({ onSelect }) {
@@ -18,6 +19,8 @@ export default function StopSearch({ onSelect }) {
 		event.preventDefault();
 		onSelect({ stop });
 	}
+
+	// http://realtime.mbta.com/developer/api/v2/stopsbyroute?api_key={API_KEY}&route=Red&format=json
 
 	return (
 		<>
