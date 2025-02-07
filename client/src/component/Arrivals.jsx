@@ -1,8 +1,17 @@
 import { useEffect, useState } from "react";
+import PropTypes from "prop-types";
 
 export default function Arrivals({ stopName, url }) {
 	console.log("In Arrive ", stopName, url);
 	const [nextTrains, setNextTrains] = useState([]);
+	// const [alerts, setAlerts] = useState([]);
+	// will need to set up a check on alerts search by route
+	// https://api-v3.mbta.com/alerts?filter[route]=Red
+
+	Arrivals.propTypes = {
+		stopName: PropTypes.string.isRequired,
+		url: PropTypes.string.isRequired,
+	};
 
 	useEffect(() => {
 		const urlKey = url;
@@ -60,13 +69,13 @@ export default function Arrivals({ stopName, url }) {
 	const getTimes = (trains, number) => {
 		console.log(trains);
 		// without this check it will break while loading / no trains
-		if (trains.length === 0) return "No trains available";
+		if (trains.length === 0) return "Err";
 
 		const arrivals = [];
 
 		for (let i = 0; i < number; i++) {
 			if (!trains[i].attributes.arrival_time) {
-				return "No Data";
+				return;
 			}
 			const predictDate = new Date(trains[i].attributes.arrival_time);
 			const currentTime = new Date();

@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import Arrivals from "./component/Arrivals";
 import StopSearch from "./component/StopSearch";
+// eslint-disable-next-line no-unused-vars
 import { CookiesProvider, useCookies } from "react-cookie";
 
 function App() {
