@@ -1,14 +1,15 @@
 import { useEffect, useState } from "react";
-// import Textbox from "./Textbox";
 
 export default function Arrivals({ stopName, url }) {
+	console.log("In Arrive ", stopName, url);
 	const [nextTrains, setNextTrains] = useState([]);
 
 	useEffect(() => {
-		const eSource = new EventSource(url, {
+		const urlKey = url;
+
+		const eSource = new EventSource(urlKey, {
 			Headers: {
 				Accept: "text/event-stream",
-				"X-API-Key": "a10b9724298d437792e206da4f0ec606",
 			},
 		});
 
@@ -54,7 +55,7 @@ export default function Arrivals({ stopName, url }) {
 		});
 
 		// return eSource.close();
-	}, []);
+	}, [url]);
 
 	const getTimes = (trains, number) => {
 		console.log(trains);

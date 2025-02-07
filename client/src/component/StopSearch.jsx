@@ -1,18 +1,20 @@
 import { useState, useEffect } from "react";
 
-export default function StopSearch({ onSelect }) {
+export default function StopSearch({ handleStopData }) {
 	const [selectedLine, setSelectedLine] = useState(null);
-	const [selectedDirection, setSelectedDirection] = useState("");
+	const [selectedDirection, setSelectedDirection] = useState(null);
 	const [selectedStop, setSelectedStop] = useState("");
-	const [loading, setLoading] = useState(false);
-	const [error, setError] = useState(null);
-
-	const [directions, setDirections] = useState(null);
+	const [selectedStopName, setSelectedStopName] = useState("");
+	// choices
 	const [stops, setStops] = useState(null);
-
+	const [directions, setDirections] = useState(null);
+	// views
 	const [showLine, setShowLine] = useState(true);
 	const [showDirection, setShowDirection] = useState(false);
 	const [showStop, setShowStop] = useState(false);
+	const [showSubmit, setShowSubmit] = useState(false);
+	const [loading, setLoading] = useState(false);
+	// const [error, setError] = useState(null);
 
 	useEffect(() => {
 		if (!selectedLine) return;
@@ -32,7 +34,6 @@ export default function StopSearch({ onSelect }) {
 			const directions = await fetch(url);
 			const data = await directions.json();
 			setDirections(data);
-			console.log("directions ", directions);
 		};
 
 		fetchDirection();
@@ -49,9 +50,12 @@ export default function StopSearch({ onSelect }) {
 
 	function handleSubmitStop(event) {
 		event.preventDefault();
+		event.target.value.split(",");
+		const [stopId, stopName] = event.target.value.split(",");
 		setLoading(true);
 		setShowStop(false);
-		setSelectedStop(event.target.value);
+		setSelectedStop(stopId.replace(/\s/g, ""));
+		setSelectedStopName(stopName.replace(/\s/g, ""));
 		setShowDirection(true);
 		setLoading(false);
 	}
@@ -60,7 +64,15 @@ export default function StopSearch({ onSelect }) {
 		event.preventDefault();
 		setLoading(true);
 		setShowDirection(false);
+		setShowSubmit(true);
 		setSelectedDirection(event.target.value);
+		setLoading(false);
+	}
+
+	function subNewStop() {
+		setLoading(true);
+		handleStopData(selectedStop, selectedDirection, selectedStopName);
+		setShowSubmit(false);
 		setLoading(false);
 	}
 
@@ -80,7 +92,9 @@ export default function StopSearch({ onSelect }) {
 						<option value="Red">Red</option>
 						<option value="Blue">Blue</option>
 						<option value="Orange">Orange</option>
-						<option value="Green">Green</option>
+						<option disabled value="Green">
+							Green coming soon!
+						</option>
 					</select>
 				</form>
 			)}
@@ -100,7 +114,10 @@ export default function StopSearch({ onSelect }) {
 						</option>
 						{stops &&
 							stops.data.map((stop) => (
-								<option value={stop.id} key={stop.id}>
+								<option
+									value={[`${stop.id} , ${stop.attributes.name}`]}
+									key={stop.id}
+								>
 									{" "}
 									{stop.attributes.name}{" "}
 								</option>
@@ -123,27 +140,18 @@ export default function StopSearch({ onSelect }) {
 							Select A Direction
 						</option>
 						{directions &&
-							directions.data.attributes.direction_destinations.map((direction) => (
-								<option value={direction} key={direction}>
-									{" "}
-									{direction}{" "}
-								</option>
-							))}
+							directions.data.attributes.direction_destinations.map(
+								(direction, index) => (
+									<option value={index} key={index}>
+										{" "}
+										{direction}{" "}
+									</option>
+								)
+							)}
 					</select>
 				</form>
 			)}
+			{showSubmit && <p onClick={subNewStop}>Fin</p>}
 		</>
 	);
 }
-
-// https://api-v3.mbta.com/stops?filter[direction_destinations]=alewife
-
-// https://api-v3.mbta.com/stops?filter[route]=Red
-
-// const url = `https://api-v3.mbta.com/routes/` + selectedLine;
-
-//  Limited sparse fieldset for names
-// https://api-v3.mbta.com/routes/?fields%5Broute%5D=short_name,long_name
-
-// ("https://api-v3.mbta.com/predictions?stop=42&api_key=a10b9724298d437792e206da4f0ec606");
-// http://realtime.mbta.com/developer/api/v2/stopsbyroute?api_key={API_KEY}&route=Red&format=json

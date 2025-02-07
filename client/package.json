@@ -10,11 +10,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@reduxjs/toolkit": "^2.5.1",
     "@tailwindcss/vite": "^4.0.0",
     "mbta-client": "^1.1.10",
     "react": "^18.3.1",
     "react-cookie": "^7.2.2",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "react-redux": "^9.2.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
