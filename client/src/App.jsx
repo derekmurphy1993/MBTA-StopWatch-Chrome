@@ -59,5 +59,4 @@ function App() {
 
 export default App;
 
-//  && !cookies.stop
 // COOKIE CONSENT: Not required, cookies only for key functionality, but will make for example

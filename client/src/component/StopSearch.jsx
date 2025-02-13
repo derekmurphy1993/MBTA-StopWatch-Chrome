@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 
+// eslint-disable-next-line react/prop-types
 export default function StopSearch({ handleStopData }) {
 	const [selectedLine, setSelectedLine] = useState(null);
 	const [selectedDirection, setSelectedDirection] = useState(null);
@@ -55,7 +56,7 @@ export default function StopSearch({ handleStopData }) {
 		setLoading(true);
 		setShowStop(false);
 		setSelectedStop(stopId.replace(/\s/g, ""));
-		setSelectedStopName(stopName.replace(/\s/g, ""));
+		setSelectedStopName(stopName.replace(/\s/g, " "));
 		setShowDirection(true);
 		setLoading(false);
 	}
