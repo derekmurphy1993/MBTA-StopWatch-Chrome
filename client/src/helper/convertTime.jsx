@@ -13,15 +13,16 @@ export default function convertTime(trains, number) {
 			return;
 		}
 
+		// handle for departure time?
+
 		const predictDate = new Date(sortData[i].attributes.arrival_time);
 		const currentTime = new Date();
 
 		const milliseconds = predictDate - currentTime;
 
-		// to make this more accurate set it to seconds and find the remainder then round
-		const minUntilArrival = Math.floor(milliseconds / 60e3);
+		const secondsUntilArrival = Math.floor(milliseconds / 1e3);
 
-		arrivals.push(minUntilArrival);
+		arrivals.push(secondsUntilArrival);
 	}
 
 	return arrivals;
