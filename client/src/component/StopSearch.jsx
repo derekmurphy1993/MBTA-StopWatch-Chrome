@@ -9,6 +9,7 @@ export default function StopSearch({ handleStopData }) {
 	// choices
 	const [stops, setStops] = useState(null);
 	const [directions, setDirections] = useState(null);
+	const [directionName, setDirectionName] = useState("");
 	// views
 	const [showLine, setShowLine] = useState(true);
 	const [showDirection, setShowDirection] = useState(false);
@@ -66,13 +67,20 @@ export default function StopSearch({ handleStopData }) {
 		setLoading(true);
 		setShowDirection(false);
 		setShowSubmit(true);
-		setSelectedDirection(event.target.value);
+		setDirectionName(event.target.value);
+		setSelectedDirection(event.target.key);
 		setLoading(false);
 	}
 
 	function subNewStop() {
 		setLoading(true);
-		handleStopData(selectedStop, selectedDirection, selectedStopName);
+		handleStopData(
+			selectedStop,
+			selectedDirection,
+			directionName,
+			selectedStopName,
+			selectedLine
+		);
 		setShowSubmit(false);
 		setLoading(false);
 	}
@@ -143,7 +151,7 @@ export default function StopSearch({ handleStopData }) {
 						{directions &&
 							directions.data.attributes.direction_destinations.map(
 								(direction, index) => (
-									<option value={index} key={index}>
+									<option value={direction} key={index}>
 										{" "}
 										{direction}{" "}
 									</option>

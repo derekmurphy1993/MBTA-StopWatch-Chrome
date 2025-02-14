@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import PropTypes from "prop-types";
+import convertTime from "../helper/convertTime";
+import Textbox from "./Textbox";
 
-export default function Arrivals({ stopName, url }) {
-	console.log("In Arrive ", stopName, url);
+export default function Arrivals({ stopName, directionName, url, line }) {
 	const [nextTrains, setNextTrains] = useState([]);
+
 	// const [alerts, setAlerts] = useState([]);
 	// will need to set up a check on alerts search by route
 	// https://api-v3.mbta.com/alerts?filter[route]=Red
@@ -11,6 +13,8 @@ export default function Arrivals({ stopName, url }) {
 	Arrivals.propTypes = {
 		stopName: PropTypes.string.isRequired,
 		url: PropTypes.string.isRequired,
+		line: PropTypes.string.isRequired,
+		directionName: PropTypes.string.isRequired,
 	};
 
 	useEffect(() => {
@@ -43,7 +47,7 @@ export default function Arrivals({ stopName, url }) {
 
 		eSource.addEventListener("add", (event) => {
 			const data = JSON.parse(event.data);
-			console.log("add ", data);
+			// console.log("add ", data);
 			setNextTrains((prev) => {
 				return [...prev, data];
 			});
@@ -51,7 +55,7 @@ export default function Arrivals({ stopName, url }) {
 
 		eSource.addEventListener("remove", (event) => {
 			const data = JSON.parse(event.data);
-			console.log("rewmove id ", data);
+			// console.log("rewmove id ", data);
 
 			setNextTrains((prev) => {
 				const newTrain = [...prev];
@@ -66,56 +70,61 @@ export default function Arrivals({ stopName, url }) {
 		// return eSource.close();
 	}, [url]);
 
-	const getTimes = (trains, number) => {
-		console.log(trains);
-		// without this check it will break while loading / no trains
-		if (trains.length === 0) return "Err";
+	let lineColor = "";
 
-		const arrivals = [];
+	switch (line) {
+		case "Blue":
+			lineColor = "bg-[#003DA5]";
+			break;
+		case "Red":
+			lineColor = "bg-[#DA291C]";
+			break;
+		case "Green":
+			lineColor = "bg-[#00843D]";
+			break;
+		case "Orange":
+			lineColor = "bg-[#ED8B00]";
+			break;
+		default:
+			lineColor = "bg-yellow-500";
+	}
 
-		for (let i = 0; i < number; i++) {
-			if (!trains[i].attributes.arrival_time) {
-				return;
-			}
-			const predictDate = new Date(trains[i].attributes.arrival_time);
-			const currentTime = new Date();
-
-			const milliseconds = predictDate - currentTime;
-
-			// console.log(predictDate);
-			// to make this more accurate set it to seconds and find the remainder then round
-			const minUntilArrival = Math.floor(milliseconds / 60e3);
-
-			let message = "";
-			if (minUntilArrival < 1) {
-				message = "Arriving Soon";
-			} else if (minUntilArrival === 1) {
-				message = "1 min";
-			} else {
-				message = `${minUntilArrival} mins`;
-			}
-
-			arrivals.push(message);
-		}
-
-		return arrivals;
-	};
-
-	const processedData = getTimes(nextTrains, 2);
+	const convertedData = convertTime(nextTrains, 3);
+	const processedData = Array.prototype.slice.call(convertedData);
 
 	return (
-		<div className="text-4xl border-4 border-slate-500 bg-slate-600 rounded-lg min-w-lg max-w-xl min-h-60">
-			<h1 className="text-center">Arrivals for {stopName}</h1>
-			<div className="flex flex-col items-center justify-center text-slate-200">
-				<div className="flex flex-row border-4 align-middle border-red-500 bg-red-800 my-1 h-20 w-full rounded-lg px-3 py-4">
-					<p className="text-left w-1/2">Arriving in </p>
-					<p className="text-right w-1/2"> {processedData && processedData[0]}</p>
-				</div>
-				<div className="flex flex-row border-4 align-middle border-red-500 bg-red-800 my-1 h-20 w-full rounded-lg px-3 py-4">
-					<p className="text-left w-1/2">Arriving in </p>
-					<p className="text-right w-1/2"> {processedData && processedData[1]}</p>
-				</div>
+		<div
+			className={`bg-gray-800 p-8 mt-12 rounded-lg shadow-2xl border-4 border-gray-700 ${lineColor} relative overflow-hidden`}
+		>
+			<div
+				className={`absolute inset-0 border-2 rounded-lg m-2 ${lineColor} pointer-events-none`}
+			></div>
+			<div
+				className={`absolute inset-0 border-2 border-slate-50 ${lineColor} rounded-lg m-4 pointer-events-none`}
+			></div>
+			<div className="text-center relative z-10  min-w-md max-w-2xl min-h-60">
+				<h1 className="text-4xl font-bold text-slate-50 font-serif">{stopName}</h1>
+				<h3 className="text-xl font-semibold text-slate-50 font-serif mt-2">
+					{" "}
+					Toward {directionName}
+				</h3>
+				<div className={`my-6 h-1 bg-white w-full mx-auto mb-6`}></div>
+
+				{/* <div className="flex justify-center space-x-4 mb-4">
+					<div className={`w-2 h-2 bg-slate-50 rounded-full`}></div>
+					<div className={`w-2 h-2 bg-slate-50 rounded-full`}></div>
+					<div className={`w-2 h-2 bg-slate-50 rounded-full`}></div>
+				</div> */}
+
+				{processedData &&
+					processedData.length > 0 &&
+					processedData.map((data, index) => <Textbox key={index} data={data} />)}
 			</div>
+			{/* Corner decorations */}
+			<div className="absolute top-0 left-0 w-12 h-12 border-t-4 border-l-4 border-slate-50"></div>
+			<div className="absolute top-0 right-0 w-12 h-12 border-t-4 border-r-4 border-slate-50"></div>
+			<div className="absolute bottom-0 left-0 w-12 h-12 border-b-4 border-l-4 border-slate-50"></div>
+			<div className="absolute bottom-0 right-0 w-12 h-12 border-b-4 border-r-4 border-slate-50"></div>
 		</div>
 	);
 }

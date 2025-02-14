@@ -6,7 +6,13 @@ import StopSearch from "./component/StopSearch";
 import { CookiesProvider, useCookies } from "react-cookie";
 
 function App() {
-	const [cookies, setCookies] = useCookies(["stop", "stopName", "consent"]);
+	const [cookies, setCookies] = useCookies([
+		"stop",
+		"stopName",
+		"directionName",
+		"line",
+		"consent",
+	]);
 	const [viewSelector, setViewSelector] = useState(false);
 
 	// https://api-v3.mbta.com/predictions?filter[stop]=place-aqucl&filter%5Bdirection_id%5D=1
@@ -18,12 +24,15 @@ function App() {
 	// };
 	// data();
 
-	const handleStopData = (stop, direction, stopName) => {
-		const url = `https://api-v3.mbta.com/predictions?stop=${stop}&direction_id=${direction}&api_key=a10b9724298d437792e206da4f0ec606`;
+	const handleStopData = (stop, direction, directionName, stopName, line) => {
+		const url = `https://api-v3.mbta.com/predictions?stop=${stop}&direction_id=${direction}&route=${line}&api_key=a10b9724298d437792e206da4f0ec606`;
 		const today = new Date();
 		const expireDate = new Date(today.setDate(today.getDate() + 30));
 		setCookies("stop", url, { path: "/", expires: expireDate });
 		setCookies("stopName", stopName, { path: "/", expires: expireDate });
+		setCookies("directionName", directionName, { path: "/", expires: expireDate });
+		setCookies("line", line, { path: "/", expires: expireDate });
+
 		setViewSelector(false);
 	};
 
@@ -49,9 +58,23 @@ function App() {
 						</p>
 					</div>
 				)}
-				{!viewSelector && <h1 onClick={() => setViewSelector(true)}>Add a New Station</h1>}
+				{!viewSelector && (
+					<h1
+						className="bg-slate-400 hover:bg-slate-500 rounded-lg p-2 text-slate-700"
+						onClick={() => setViewSelector(true)}
+					>
+						Add a New Station
+					</h1>
+				)}
 				{viewSelector && <StopSearch handleStopData={handleStopData} />}
-				{cookies.stop && <Arrivals url={cookies.stop} stopName={cookies.stopName} />}
+				{cookies.stop && (
+					<Arrivals
+						url={cookies.stop}
+						stopName={cookies.stopName}
+						directionName={cookies.directionName}
+						line={cookies.line}
+					/>
+				)}
 			</div>
 		</CookiesProvider>
 	);
