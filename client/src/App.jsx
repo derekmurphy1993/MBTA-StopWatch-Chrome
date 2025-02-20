@@ -2,7 +2,7 @@ import { useState } from "react";
 
 import Arrivals from "./component/Arrivals";
 import StopSearch from "./component/StopSearch";
-// eslint-disable-next-line no-unused-vars
+import Clock from "./component/Clock";
 import { CookiesProvider, useCookies } from "react-cookie";
 
 function App() {
@@ -58,16 +58,8 @@ function App() {
 						</p>
 					</div>
 				)}
-				{!viewSelector && (
-					<h1
-						className="bg-slate-400 hover:bg-slate-500 rounded-lg p-2 text-slate-700"
-						onClick={() => setViewSelector(true)}
-					>
-						Add a New Station
-					</h1>
-				)}
-				{viewSelector && <StopSearch handleStopData={handleStopData} />}
-				{cookies.stop && (
+				{!viewSelector && cookies.stop && <Clock />}
+				{!viewSelector && cookies.stop && (
 					<Arrivals
 						url={cookies.stop}
 						stopName={cookies.stopName}
@@ -75,6 +67,34 @@ function App() {
 						line={cookies.line}
 					/>
 				)}
+				{!viewSelector && cookies.stop && (
+					<h1
+						className="bg-slate-400 hover:bg-slate-500 rounded-lg mt-5 p-2 text-slate-700"
+						onClick={() => setViewSelector(true)}
+					>
+						Change Stop
+					</h1>
+				)}
+				{!viewSelector && !cookies.stop && (
+					<h1
+						className="bg-slate-50 hover:bg-slate-500 rounded-lg mt-5 p-2 text-slate-700"
+						onClick={() => setViewSelector(true)}
+					>
+						Select A Stop
+					</h1>
+				)}
+				{!viewSelector && (
+					<p className="font-light text-sm mt-10 px-10 max-w-3xl fixed bottom-10 text-center">
+						{" "}
+						The MBTA StopWatch allows you to select a stop of your choice and will show
+						you real time predictions on when the next train is arriving. This is in
+						early development and not all times and alerts are 100% accurate. <br />
+						<span className="font-semibold">
+							This application is developed by a third party, not MassDOT or the MBTA.{" "}
+						</span>{" "}
+					</p>
+				)}
+				{viewSelector && <StopSearch handleStopData={handleStopData} />}
 			</div>
 		</CookiesProvider>
 	);

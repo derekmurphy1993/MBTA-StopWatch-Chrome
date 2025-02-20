@@ -4,14 +4,13 @@ import { useState, useEffect } from "react";
 export default function StopSearch({ handleStopData }) {
 	const [selectedLine, setSelectedLine] = useState(null);
 	const [selectedDirection, setSelectedDirection] = useState(null);
-	const [selectedStop, setSelectedStop] = useState("");
+	const [selectedStop, setSelectedStop] = useState(null);
 	const [selectedStopName, setSelectedStopName] = useState("");
 	// choices
 	const [stops, setStops] = useState(null);
 	const [directions, setDirections] = useState(null);
 	const [directionName, setDirectionName] = useState("");
 	// views
-	const [showLine, setShowLine] = useState(true);
 	const [showDirection, setShowDirection] = useState(false);
 	const [showStop, setShowStop] = useState(false);
 	const [showSubmit, setShowSubmit] = useState(false);
@@ -44,7 +43,15 @@ export default function StopSearch({ handleStopData }) {
 	function handleSubmitLine(event) {
 		event.preventDefault();
 		setLoading(true);
-		setShowLine(false);
+		setSelectedStopName("");
+		setSelectedStop(null);
+		setSelectedDirection("");
+		setDirectionName("");
+		setDirections(null);
+		setStops(null);
+
+		setShowStop(false);
+		setShowDirection(false);
 		setSelectedLine(event.target.value);
 		setShowStop(true);
 		setLoading(false);
@@ -55,7 +62,6 @@ export default function StopSearch({ handleStopData }) {
 		event.target.value.split(",");
 		const [stopId, stopName] = event.target.value.split(",");
 		setLoading(true);
-		setShowStop(false);
 		setSelectedStop(stopId.replace(/\s/g, ""));
 		setSelectedStopName(stopName.replace(/\s/g, " "));
 		setShowDirection(true);
@@ -65,7 +71,6 @@ export default function StopSearch({ handleStopData }) {
 	function handleSubmitDir(event) {
 		event.preventDefault();
 		setLoading(true);
-		setShowDirection(false);
 		setShowSubmit(true);
 		setDirectionName(event.target.value);
 		setSelectedDirection(event.target.key);
@@ -87,9 +92,9 @@ export default function StopSearch({ handleStopData }) {
 
 	return (
 		<>
-			<h1>Create a new watch</h1>
+			<h1 className="text-white"> Find A New Stop</h1>
 			{loading && <p>Loading...</p>}
-			{!loading && showLine && (
+			{!loading && (
 				<form
 					onChange={handleSubmitLine}
 					className="flex flex-col items-center justify-center"
@@ -160,7 +165,14 @@ export default function StopSearch({ handleStopData }) {
 					</select>
 				</form>
 			)}
-			{showSubmit && <p onClick={subNewStop}>Fin</p>}
+			{showSubmit && (
+				<p
+					className="p-2 bg-white hover:bg-slate-400 border-2 cursor-default border-slate-500 mt-5 rounded-xl"
+					onClick={subNewStop}
+				>
+					Submit
+				</p>
+			)}
 		</>
 	);
 }

@@ -94,7 +94,7 @@ export default function Arrivals({ stopName, directionName, url, line }) {
 
 	return (
 		<div
-			className={`bg-gray-800 p-8 mt-12 rounded-lg shadow-2xl border-4 border-gray-700 ${lineColor} relative overflow-hidden`}
+			className={`bg-gray-800 p-8 mt-2 rounded-lg shadow-2xl border-4 border-gray-700 ${lineColor} relative overflow-hidden`}
 		>
 			<div
 				className={`absolute inset-0 border-2 rounded-lg m-2 ${lineColor} pointer-events-none`}
