@@ -30,6 +30,7 @@ function App() {
 		const expireDate = new Date(today.setDate(today.getDate() + 30));
 		setCookies("stop", url, { path: "/", expires: expireDate });
 		setCookies("stopName", stopName, { path: "/", expires: expireDate });
+		setCookies("direction", direction, { path: "/", expires: expireDate });
 		setCookies("directionName", directionName, { path: "/", expires: expireDate });
 		setCookies("line", line, { path: "/", expires: expireDate });
 

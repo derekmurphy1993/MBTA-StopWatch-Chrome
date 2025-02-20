@@ -69,15 +69,17 @@ export default function StopSearch({ handleStopData }) {
 	}
 
 	function handleSubmitDir(event) {
+		const [direction, index] = event.target.value.split(",");
 		event.preventDefault();
 		setLoading(true);
 		setShowSubmit(true);
-		setDirectionName(event.target.value);
-		setSelectedDirection(event.target.key);
+		setDirectionName(direction);
+		setSelectedDirection(index);
 		setLoading(false);
 	}
 
 	function subNewStop() {
+		console.log(selectedDirection);
 		setLoading(true);
 		handleStopData(
 			selectedStop,
@@ -156,7 +158,7 @@ export default function StopSearch({ handleStopData }) {
 						{directions &&
 							directions.data.attributes.direction_destinations.map(
 								(direction, index) => (
-									<option value={direction} key={index}>
+									<option value={[direction, index]} key={index}>
 										{" "}
 										{direction}{" "}
 									</option>
