@@ -1,22 +1,27 @@
-export default function Textbox(data) {
-	const seconds = data.data;
-	const minUntilArrival = Math.floor(seconds / 60);
+import { getArrivalLabel } from "../helper/arrivalDisplay";
+
+// eslint-disable-next-line react/prop-types
+export default function Textbox({ train, index }) {
+	const label = getArrivalLabel(train);
+	const leftCopy =
+		label === "DUE"
+			? "NOW ARRIVING"
+			: label === "DELAYED, SEE ALERT"
+				? "SERVICE ALERT"
+				: "Arriving in";
 
 	return (
-		<div className="my-2 flex flex-row bg-slate-700 h-16 shadow-xl px-3 py-4 rounded-xl">
-			{minUntilArrival < 1 ? (
-				<p className="text-4xl text-slate-50 mx-auto font-mono animate-pulse">
-					{" "}
-					Now Arriving{" "}
-				</p>
-			) : (
-				<>
-					<p className="text-2xl text-slate-50 font-mono text-left w-1/2">Arriving in </p>
-					<p className="text-2xl text-slate-50 font-mono text-right w-1/2">
-						{minUntilArrival} minutes
-					</p>
-				</>
-			)}{" "}
+		<div className="w-full h-[100px] border border-black bg-white flex flex-row items-center px-16">
+			<p className="text-4xl leading-tight w-1/2 text-center whitespace-pre-line">
+				{index === 0 && label === "DUE" ? "NOW\nARRIVING" : leftCopy}
+			</p>
+			<p className="text-5xl w-1/2 text-center">
+				{label === "DUE"
+					? "DUE"
+					: label === "DELAYED, SEE ALERT"
+						? "DELAYED, SEE ALERT"
+						: label.replace(" min", " minutes")}
+			</p>
 		</div>
 	);
 }

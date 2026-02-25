@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 
 // eslint-disable-next-line react/prop-types
-export default function StopSearch({ handleStopData }) {
+export default function StopSearch({ handleStopData, initialLine = "" }) {
 	const [selectedLine, setSelectedLine] = useState(null);
 	const [selectedDirection, setSelectedDirection] = useState(null);
 	const [selectedStop, setSelectedStop] = useState(null);
@@ -18,26 +18,63 @@ export default function StopSearch({ handleStopData }) {
 	// const [error, setError] = useState(null);
 
 	useEffect(() => {
+		if (!initialLine) return;
+		setSelectedLine(initialLine);
+		setShowStop(true);
+	}, [initialLine]);
+
+	useEffect(() => {
 		if (!selectedLine) return;
+		const controller = new AbortController();
+
 		const fetchData = async () => {
-			const url = `https://api-v3.mbta.com/stops?filter[route]=` + selectedLine;
-			const stops = await fetch(url);
-			const data = await stops.json();
-			setStops(data);
+			try {
+				const query = new URLSearchParams({
+					"filter[route]": selectedLine,
+					"fields[stop]": "name",
+					"page[limit]": "100",
+				});
+				const stops = await fetch(`https://api-v3.mbta.com/stops?${query.toString()}`, {
+					signal: controller.signal,
+				});
+				if (!stops.ok) return;
+				const data = await stops.json();
+				setStops(data);
+			} catch (error) {
+				if (error.name !== "AbortError") {
+					console.error("Failed to fetch stops", error);
+				}
+			}
 		};
 
 		fetchData();
 
-		if (!selectedStop) return;
+		if (!selectedStop) {
+			return () => controller.abort();
+		}
 
 		const fetchDirection = async () => {
-			const url = `https://api-v3.mbta.com/routes/` + selectedLine;
-			const directions = await fetch(url);
-			const data = await directions.json();
-			setDirections(data);
+			try {
+				const query = new URLSearchParams({
+					"fields[route]": "direction_destinations",
+				});
+				const directions = await fetch(
+					`https://api-v3.mbta.com/routes/${selectedLine}?${query.toString()}`,
+					{ signal: controller.signal },
+				);
+				if (!directions.ok) return;
+				const data = await directions.json();
+				setDirections(data);
+			} catch (error) {
+				if (error.name !== "AbortError") {
+					console.error("Failed to fetch directions", error);
+				}
+			}
 		};
 
 		fetchDirection();
+
+		return () => controller.abort();
 	}, [selectedLine, selectedStop]);
 
 	function handleSubmitLine(event) {
@@ -52,7 +89,8 @@ export default function StopSearch({ handleStopData }) {
 
 		setShowStop(false);
 		setShowDirection(false);
-		setSelectedLine(event.target.value);
+		const nextLine = event.target.value;
+		setSelectedLine(nextLine);
 		setShowStop(true);
 		setLoading(false);
 	}
@@ -101,8 +139,11 @@ export default function StopSearch({ handleStopData }) {
 					onChange={handleSubmitLine}
 					className="flex flex-col items-center justify-center"
 				>
-					<select className="border-2 mt-4 border-slate-500 bg-slate-200 rounded-lg h-12 w-64 p-2">
-						<option selected disabled className="text-slate-200">
+					<select
+						value={selectedLine ?? ""}
+						className="border-2 mt-4 border-slate-500 bg-slate-200 rounded-lg h-12 w-64 p-2"
+					>
+						<option value="" disabled className="text-slate-200">
 							Select A Line
 						</option>
 						<option value="Red">Red</option>
@@ -120,12 +161,7 @@ export default function StopSearch({ handleStopData }) {
 					className="flex flex-col items-center justify-center"
 				>
 					<select className="border-2 mt-4 border-slate-500 bg-slate-200 rounded-lg h-12 w-64 p-2">
-						<option
-							selected
-							defaultValue={"Select A Line"}
-							disabled
-							className="text-slate-200"
-						>
+						<option value="" disabled className="text-slate-200">
 							Select A Stop
 						</option>
 						{stops &&
@@ -147,12 +183,7 @@ export default function StopSearch({ handleStopData }) {
 					className="flex flex-col items-center justify-center"
 				>
 					<select className="border-2 mt-4 border-slate-500 bg-slate-200 rounded-lg h-12 w-64 p-2">
-						<option
-							selected
-							defaultValue={"Select a direction"}
-							disabled
-							className="text-slate-200"
-						>
+						<option value="" disabled className="text-slate-200">
 							Select A Direction
 						</option>
 						{directions &&
