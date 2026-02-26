@@ -56,30 +56,69 @@ function extractVehiclesMap(payload) {
 	return map;
 }
 
-function getSlotKeyFromStopSequence(prediction, vehicle, precedingStops) {
+function getVehicleForPrediction(prediction, vehiclesById) {
+	const vehicleId = prediction?.relationships?.vehicle?.data?.id;
+	if (!vehicleId) return undefined;
+	return vehiclesById[vehicleId];
+}
+
+function getPlacementFromVehicle(
+	prediction,
+	vehicle,
+	precedingStops,
+	directionStops,
+	currentStopIndex,
+) {
 	const furthestPrecedingKey = precedingStops[0]?.id || "current";
+	const outOfRangeResult = {
+		slotKey: furthestPrecedingKey,
+		isOutOfRange: true,
+		offsetRight: false,
+	};
+	const currentResult = { slotKey: "current", isOutOfRange: false, offsetRight: false };
+	const status = vehicle?.current_status;
+	const isInTransit = status === "IN_TRANSIT_TO";
+	const resolvePlacementFromStopsAway = (stopsAway, offsetRight = false) => {
+		if (!Number.isFinite(stopsAway)) return outOfRangeResult;
+		if (stopsAway <= 0) return currentResult;
+		if (stopsAway > precedingStops.length) return outOfRangeResult;
+
+		// precedingStops are ordered furthest -> nearest to current
+		const precedingIndex = precedingStops.length - stopsAway;
+		const slotKey = precedingStops[precedingIndex]?.id || furthestPrecedingKey;
+		return {
+			slotKey,
+			isOutOfRange: false,
+			offsetRight: offsetRight && slotKey !== "current",
+		};
+	};
+
+	// Primary: use stop-sequence math to compute stops-away from the tracked stop.
 	const predictionStopSequence = Number(prediction?.attributes?.stop_sequence);
 	const vehicleStopSequence = Number(vehicle?.current_stop_sequence);
-
-	if (
-		!Number.isFinite(predictionStopSequence) ||
-		!Number.isFinite(vehicleStopSequence)
-	) {
-		return furthestPrecedingKey;
+	if (Number.isFinite(predictionStopSequence) && Number.isFinite(vehicleStopSequence)) {
+		const stopsAway = predictionStopSequence - vehicleStopSequence;
+		return resolvePlacementFromStopsAway(stopsAway, isInTransit);
 	}
 
-	const stopsAway = predictionStopSequence - vehicleStopSequence;
-	if (stopsAway <= 0) return "current";
-	if (stopsAway > precedingStops.length) return furthestPrecedingKey;
+	// Fallback: derive relative distance from current_stop_id index.
+	const vehicleStopId = vehicle?.current_stop_id;
+	if (vehicleStopId && currentStopIndex >= 0) {
+		const vehicleStopIndex = directionStops.findIndex(
+			(routeStop) => routeStop.id === vehicleStopId,
+		);
+		if (vehicleStopIndex >= 0) {
+			const stopsAwayFromCurrent = currentStopIndex - vehicleStopIndex;
+			return resolvePlacementFromStopsAway(stopsAwayFromCurrent, isInTransit);
+		}
+	}
 
-	// precedingStops are ordered furthest -> nearest to current
-	const precedingIndex = precedingStops.length - stopsAway;
-	return precedingStops[precedingIndex]?.id || furthestPrecedingKey;
+	return outOfRangeResult;
 }
 
 function TrackerIcon({ tracker }) {
 	const sizeClass = tracker.isDueCollapsed ? "scale-110" : "scale-100";
-	const shiftClass = tracker.offsetRight ? "translate-x-7" : "";
+	const shiftClass = tracker.offsetRight ? "translate-x-16" : "";
 
 	return (
 		<div className={`relative flex flex-col items-center ${sizeClass} ${shiftClass} pb-2`}>
@@ -108,13 +147,17 @@ export default function Arrivals({
 	directionName,
 	line,
 	onSelectionChange,
-	onLineSwitchRequest,
 }) {
 	const [clock, setClock] = useState(getClockString());
 	const [predictions, setPredictions] = useState([]);
 	const [vehiclesById, setVehiclesById] = useState({});
 	const [directionStops, setDirectionStops] = useState([]);
 	const [directionNames, setDirectionNames] = useState([]);
+
+	useEffect(() => {
+		setPredictions([]);
+		setVehiclesById({});
+	}, [stop, direction, line]);
 
 	useEffect(() => {
 		const id = setInterval(() => setClock(getClockString()), 1000);
@@ -190,7 +233,7 @@ export default function Arrivals({
 			include: "vehicle",
 			sort: "arrival_time",
 			"fields[prediction]": "arrival_time,departure_time,status,stop_sequence",
-			"fields[vehicle]": "current_status,current_stop_sequence",
+			"fields[vehicle]": "current_status,current_stop_sequence,current_stop_id",
 			"page[limit]": "20",
 			api_key: "a10b9724298d437792e206da4f0ec606",
 		});
@@ -269,7 +312,7 @@ export default function Arrivals({
 			try {
 				const query = new URLSearchParams({
 					"filter[id]": vehicleIds.join(","),
-					"fields[vehicle]": "current_status,current_stop_sequence",
+					"fields[vehicle]": "current_status,current_stop_sequence,current_stop_id",
 				});
 				const response = await fetch(
 					`https://api-v3.mbta.com/vehicles?${query.toString()}`,
@@ -316,7 +359,7 @@ export default function Arrivals({
 
 	const precedingStops = useMemo(() => {
 		if (currentStopIndex < 0) return [];
-		return directionStops.slice(Math.max(0, currentStopIndex - 3), currentStopIndex);
+		return directionStops.slice(Math.max(0, currentStopIndex - 4), currentStopIndex);
 	}, [directionStops, currentStopIndex]);
 
 	const staticStopSlots = useMemo(() => {
@@ -335,24 +378,61 @@ export default function Arrivals({
 		});
 
 		const dueTrains = [];
+		const outOfRangePredictions = [];
+		const furthestPrecedingKey = precedingStops[0]?.id || "current";
+		const nearestPrecedingKey = precedingStops[precedingStops.length - 1]?.id;
+		const trackedPredictions = nextThreeTrains;
 
-		sortedPredictions.forEach((prediction) => {
+		trackedPredictions.forEach((prediction) => {
 			const label = getArrivalLabel(prediction);
-			if (label === "DUE") {
+			const vehicle = getVehicleForPrediction(prediction, vehiclesById);
+			const placement = getPlacementFromVehicle(
+				prediction,
+				vehicle,
+				precedingStops,
+				directionStops,
+				currentStopIndex,
+			);
+			const isTransitAtCurrent =
+				placement.slotKey === "current" && vehicle?.current_status === "IN_TRANSIT_TO";
+			const isTransitFromNearestPreceding =
+				placement.slotKey === nearestPrecedingKey && placement.offsetRight;
+
+			if (
+				label === "DUE" ||
+				isTransitAtCurrent ||
+				isTransitFromNearestPreceding
+			) {
 				dueTrains.push(prediction);
 				return;
 			}
+			if (placement.isOutOfRange) {
+				outOfRangePredictions.push(prediction);
+				return;
+			}
 
-			const vehicleId = prediction?.relationships?.vehicle?.data?.id;
-			const vehicle = vehicleId ? vehiclesById[vehicleId] : undefined;
-			const slotKey = getSlotKeyFromStopSequence(prediction, vehicle, precedingStops);
-
-			slots[slotKey].push({
+			slots[placement.slotKey].push({
 				label,
-				offsetRight: vehicle?.current_status === "IN_TRANSIT_TO",
+				offsetRight: placement.offsetRight,
 				isDueCollapsed: false,
 			});
 		});
+
+		if (outOfRangePredictions.length > 0) {
+			const lowestSeconds = outOfRangePredictions.reduce((minimum, prediction) => {
+				const seconds = getArrivalSeconds(prediction);
+				if (!Number.isFinite(seconds)) return minimum;
+				return Math.min(minimum, seconds);
+			}, Number.POSITIVE_INFINITY);
+
+			slots[furthestPrecedingKey].push({
+				label: Number.isFinite(lowestSeconds)
+					? `>${Math.max(1, Math.floor(lowestSeconds / 60))} min`
+					: "DELAYED, SEE ALERT",
+				offsetRight: false,
+				isDueCollapsed: false,
+			});
+		}
 
 		if (dueTrains.length > 0) {
 			slots.current = [
@@ -365,7 +445,14 @@ export default function Arrivals({
 		}
 
 		return slots;
-	}, [precedingStops, sortedPredictions, staticStopSlots, vehiclesById]);
+	}, [
+		currentStopIndex,
+		directionStops,
+		nextThreeTrains,
+		precedingStops,
+		staticStopSlots,
+		vehiclesById,
+	]);
 
 	const handleStopSelect = (event) => {
 		const nextStopId = event.target.value;
@@ -399,27 +486,23 @@ export default function Arrivals({
 		<div className="w-full overflow-x-auto py-6">
 			<div className="w-[1190px] h-[800px] max-w-none bg-[#d5d5d5] border-4 border-black mx-auto relative px-10">
 				<div className="pt-8 px-2">
-					<div className="relative h-[165px]">
-						<div
-							className="absolute left-0 top-[106px] border-t-4 border-black"
-							style={{ width: "calc(50% - 190px)" }}
-						/>
-							<div
-								className="absolute right-0 top-[106px] border-t-4 border-black"
-								style={{ left: "calc(50% + 190px)" }}
-							/>
+						<div className="relative h-[165px]">
+							<div className="absolute left-0 right-0 top-[106px] border-t-4 border-black" />
 							<div className="absolute right-0 top-[106px] -translate-y-1/2 w-12 flex flex-col items-center">
 								<div className="w-12 h-12 rounded-full border-4 border-black bg-[#d5d5d5]" />
 								<p className="absolute top-[58px] w-24 text-center text-[10px] leading-[12px]">
-									{directionName || "Direction"}
-								</p>
-							</div>
-							<div
-								className="absolute left-0 top-[106px] -translate-y-1/2 flex items-center justify-between"
-								style={{ width: "calc(50% - 190px)" }}
-							>
+								{directionName || "Direction"}
+							</p>
+						</div>
+						<div
+							className="absolute left-0 top-[106px] -translate-y-1/2 flex items-center justify-between"
+							style={{ width: "calc(50% - 150px)" }}
+						>
 							{leftSlots.map((slot) => (
-								<div key={slot.key} className="relative w-12 flex flex-col items-center">
+								<div
+									key={slot.key}
+									className="relative w-12 flex flex-col items-center"
+								>
 									<div className="absolute left-1/2 -translate-x-1/2 -top-[80px]">
 										{(trackersBySlot[slot.key] || [])
 											.slice(0, 1)
@@ -462,7 +545,7 @@ export default function Arrivals({
 								<select
 									value={stop}
 									onChange={handleStopSelect}
-									className="w-full text-center text-6xl leading-none bg-transparent"
+									className="w-full text-center text-6xl leading-none bg-white border-2 border-black "
 								>
 									{directionStops.map((routeStop) => (
 										<option value={routeStop.id} key={routeStop.id}>
@@ -473,23 +556,18 @@ export default function Arrivals({
 							</div>
 						</div>
 
-						<div className="mt-4 flex items-center gap-2 text-5xl">
-							<select
-								value={line}
-								onChange={(event) => onLineSwitchRequest(event.target.value)}
-								className="text-2xl border-2 border-black bg-[#f3ecee] px-3 py-1"
-							>
-								<option value="Red">Red</option>
-								<option value="Blue">Blue</option>
-								<option value="Orange">Orange</option>
-								<option value="Green">Green</option>
+						<div className="mt-4 flex items-center gap-2 text-2xl">
+							<select>
+								<option value="Red">Red line toward</option>s
+								<option value="Blue">Blue line toward</option>
+								<option value="Orange">Orange line toward</option>
+								<option value="Green">Green line toward</option>
 							</select>
-							<p>toward</p>
-							<div className="flex items-center bg-[#f3ecee] px-3 py-1 border-2 border-black">
+							<div className="flex items-center text-2xl px-3 py-1">
 								<select
 									value={String(direction)}
 									onChange={handleDirectionSelect}
-									className="text-5xl bg-transparent"
+									className="text-2xl bg-transparent"
 								>
 									{directionNames.map((name, index) => (
 										<option value={index} key={name}>
@@ -497,7 +575,6 @@ export default function Arrivals({
 										</option>
 									))}
 								</select>
-								<span className="ml-2 text-4xl leading-none">◀</span>
 							</div>
 						</div>
 					</div>
@@ -527,5 +604,4 @@ Arrivals.propTypes = {
 	directionName: PropTypes.string.isRequired,
 	line: PropTypes.string.isRequired,
 	onSelectionChange: PropTypes.func.isRequired,
-	onLineSwitchRequest: PropTypes.func.isRequired,
 };
