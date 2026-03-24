@@ -3,6 +3,8 @@ import PropTypes from "prop-types";
 import Textbox from "./Textbox";
 import { getArrivalLabel, getArrivalSeconds } from "../helper/arrivalDisplay";
 
+const SHOW_TRACKER_DEBUG = true;
+
 function getLineColor(line) {
 	switch (line) {
 		case "Blue":
@@ -122,6 +124,12 @@ function TrackerIcon({ tracker }) {
 
 	return (
 		<div className={`relative flex flex-col items-center ${sizeClass} ${shiftClass} pb-2`}>
+			{SHOW_TRACKER_DEBUG && tracker.debug && (
+				<p className="text-[9px] leading-[10px] text-black/80 text-center mb-1 whitespace-pre-line">
+					{tracker.debug}
+					{`\nidx:${tracker.trackerIdx ?? "-"}`}
+				</p>
+			)}
 			<p
 				className={`text-2xl leading-none mb-2 ${tracker.isDueCollapsed ? "font-bold" : "font-normal"}`}
 			>
@@ -137,6 +145,8 @@ TrackerIcon.propTypes = {
 		label: PropTypes.string.isRequired,
 		offsetRight: PropTypes.bool,
 		isDueCollapsed: PropTypes.bool,
+		debug: PropTypes.string,
+		trackerIdx: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
 	}).isRequired,
 };
 
@@ -359,7 +369,7 @@ export default function Arrivals({
 
 	const precedingStops = useMemo(() => {
 		if (currentStopIndex < 0) return [];
-		return directionStops.slice(Math.max(0, currentStopIndex - 4), currentStopIndex);
+		return directionStops.slice(Math.max(0, currentStopIndex - 3), currentStopIndex);
 	}, [directionStops, currentStopIndex]);
 
 	const staticStopSlots = useMemo(() => {
@@ -383,9 +393,10 @@ export default function Arrivals({
 		const nearestPrecedingKey = precedingStops[precedingStops.length - 1]?.id;
 		const trackedPredictions = nextThreeTrains;
 
-		trackedPredictions.forEach((prediction) => {
+		trackedPredictions.forEach((prediction, trackerIdx) => {
 			const label = getArrivalLabel(prediction);
 			const vehicle = getVehicleForPrediction(prediction, vehiclesById);
+			const vehicleId = prediction?.relationships?.vehicle?.data?.id || "no-vehicle";
 			const placement = getPlacementFromVehicle(
 				prediction,
 				vehicle,
@@ -415,6 +426,8 @@ export default function Arrivals({
 				label,
 				offsetRight: placement.offsetRight,
 				isDueCollapsed: false,
+				trackerIdx,
+				debug: `vid:${vehicleId}\nslot:${placement.slotKey}\nstatus:${vehicle?.current_status || "n/a"}\noff:${placement.offsetRight ? "Y" : "N"}`,
 			});
 		});
 
@@ -431,6 +444,8 @@ export default function Arrivals({
 					: "DELAYED, SEE ALERT",
 				offsetRight: false,
 				isDueCollapsed: false,
+				trackerIdx: "group",
+				debug: `group:out-of-range\ncount:${outOfRangePredictions.length}\nslot:${furthestPrecedingKey}`,
 			});
 		}
 
@@ -440,6 +455,8 @@ export default function Arrivals({
 					label: "DUE",
 					offsetRight: false,
 					isDueCollapsed: true,
+					trackerIdx: "group",
+					debug: `group:DUE\ncount:${dueTrains.length}\nslot:current`,
 				},
 			];
 		}
@@ -481,6 +498,8 @@ export default function Arrivals({
 
 	const lineColor = getLineColor(line);
 	const leftSlots = staticStopSlots.filter((slot) => slot.key !== "current");
+	const furthestPrecedingKey = precedingStops[0]?.id || "current";
+	const nearestPrecedingKey = precedingStops[precedingStops.length - 1]?.id || "current";
 
 	return (
 		<div className="w-full overflow-x-auto py-6">
@@ -496,7 +515,7 @@ export default function Arrivals({
 						</div>
 						<div
 							className="absolute left-0 top-[106px] -translate-y-1/2 flex items-center justify-between"
-							style={{ width: "calc(50% - 150px)" }}
+							style={{ width: "calc(50% - 170px)" }}
 						>
 							{leftSlots.map((slot) => (
 								<div
@@ -517,6 +536,17 @@ export default function Arrivals({
 									<p className="absolute top-[58px] w-24 text-center text-[10px] leading-[12px]">
 										{slot.name}
 									</p>
+									{SHOW_TRACKER_DEBUG && (
+										<p className="absolute top-[84px] w-32 text-center text-[9px] leading-[10px] text-black/80">
+											{`slot:${slot.key}`}
+											<br />
+											{slot.key === furthestPrecedingKey
+												? "role:furthestPrecedingKey"
+												: slot.key === nearestPrecedingKey
+													? "role:nearestPrecedingKey"
+													: "role:preceding"}
+										</p>
+									)}
 								</div>
 							))}
 						</div>
@@ -536,6 +566,13 @@ export default function Arrivals({
 										<TrackerIcon key={`current-${index}`} tracker={tracker} />
 									))}
 							</div>
+							{SHOW_TRACKER_DEBUG && (
+								<p className="absolute -bottom-[28px] text-[9px] leading-[10px] text-black/80 text-center">
+									slot:current
+									<br />
+									role:current
+								</p>
+							)}
 						</div>
 					</div>
 
