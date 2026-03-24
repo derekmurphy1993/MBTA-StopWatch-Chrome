@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import Arrivals from "./component/Arrivals";
 import StopSearch from "./component/StopSearch";
@@ -15,15 +15,6 @@ function App() {
 	]);
 	const [viewSelector, setViewSelector] = useState(false);
 	const [preselectedLine, setPreselectedLine] = useState("");
-
-	// https://api-v3.mbta.com/predictions?filter[stop]=place-aqucl&filter%5Bdirection_id%5D=1
-
-	// const data = async () => {
-	// 	const res = await fetch("https://api-v3.mbta.com/data/{index}/attributes/arrival_time");
-	// 	console.log(res);
-	// https://api-v3.mbta.com/predictions?stop=70278&api_key=a10b9724298d437792e206da4f0ec606
-	// };
-	// data();
 
 	const setSelectionCookies = (stop, direction, directionName, stopName, line) => {
 		const today = new Date();
@@ -72,6 +63,20 @@ function App() {
 		const expireDate = new Date(today.setDate(today.getDate() + 90));
 		setCookies("consent", "yes", { path: "/", expires: expireDate });
 	};
+
+	useEffect(() => {
+		// Legacy migration: if an old session has a selected stop on plain "Green", force reselect branch.
+		if (cookies.line !== "Green" || !cookies.stop) return;
+		const today = new Date();
+		const expireDate = new Date(today.setDate(today.getDate() + 30));
+		setCookies("line", "Green", { path: "/", expires: expireDate });
+		removeCookie("stop", { path: "/" });
+		removeCookie("stopName", { path: "/" });
+		removeCookie("direction", { path: "/" });
+		removeCookie("directionName", { path: "/" });
+		setPreselectedLine("Green");
+		setViewSelector(true);
+	}, [cookies.line, cookies.stop, removeCookie, setCookies]);
 
 	return (
 		<CookiesProvider>
@@ -127,5 +132,3 @@ function App() {
 }
 
 export default App;
-
-// COOKIE CONSENT: Not required, cookies only for key functionality, but will make for example

@@ -22,10 +22,11 @@ function resolveSecondsUntilArrival(train) {
 	return Math.max(...candidates);
 }
 
-export function getArrivalLabel(train) {
+export function getArrivalLabel(train, options = {}) {
 	const status = (train?.attributes?.status || "").toLowerCase();
+	const hasAlert = Boolean(options?.hasAlert);
 
-	if (status.includes("delayed") || status.includes("alert")) {
+	if (hasAlert || status.includes("delayed") || status.includes("alert")) {
 		return "DELAYED, SEE ALERT";
 	}
 

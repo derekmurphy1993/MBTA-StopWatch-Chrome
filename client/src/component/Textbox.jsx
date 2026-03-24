@@ -1,8 +1,8 @@
 import { getArrivalLabel } from "../helper/arrivalDisplay";
 
 // eslint-disable-next-line react/prop-types
-export default function Textbox({ train, index, lastKnownStopName }) {
-	const label = getArrivalLabel(train);
+export default function Textbox({ train, index, lastKnownStopName, hasAlert = false }) {
+	const label = getArrivalLabel(train, { hasAlert });
 	const lastKnownLabel = `Last known station: ${lastKnownStopName ?? "Unavailable"}`;
 	const leftCopy =
 		label === "DUE"
@@ -16,12 +16,13 @@ export default function Textbox({ train, index, lastKnownStopName }) {
 			<p className="text-4xl leading-tight w-1/2 text-center whitespace-pre-line">
 				{index === 0 && label === "DUE" ? "NOW\nARRIVING" : leftCopy}
 			</p>
-			<p className="text-5xl w-1/2 text-center">
+			<p className="text-5xl w-1/2 text-center flex items-center justify-center gap-3">
 				{label === "DUE"
 					? "NOW ARRIVING"
 					: label === "DELAYED, SEE ALERT"
 						? "DELAYED, SEE ALERT"
 						: label.replace(" min", " minutes")}
+				{hasAlert && <span className="text-4xl text-red-700">🔔</span>}
 			</p>
 		</div>
 	);

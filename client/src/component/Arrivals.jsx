@@ -3,16 +3,48 @@ import PropTypes from "prop-types";
 import Textbox from "./Textbox";
 import { getArrivalLabel, getArrivalSeconds } from "../helper/arrivalDisplay";
 
-const SHOW_TRACKER_DEBUG = true;
+const SHOW_TRACKER_DEBUG = false;
+const ALERT_POLL_ACTIVE_MS = 30000;
+const ALERT_POLL_IDLE_MS = 60000;
+const VEHICLE_BACKFILL_MS = 30000;
+const POLL_BACKOFF_BASE_MS = 5000;
+const POLL_BACKOFF_MAX_MS = 120000;
+const VISIBILITY_RECHECK_MS = 5000;
+const SELECTION_DEBOUNCE_MS = 250;
+const GREEN_BRANCH_ROUTES = ["Green-B", "Green-C", "Green-D", "Green-E"];
+const ALERT_EFFECTS_FOR_ARRIVALS = new Set([
+	"DELAY",
+	"SUSPENSION",
+	"SHUTTLE",
+	"SERVICE_CHANGE",
+	"STATION_CLOSURE",
+	"STOP_CLOSURE",
+	"TRACK_CHANGE",
+]);
+
+function isGreenRoute(line) {
+	return String(line || "").startsWith("Green");
+}
+
+function getRealtimeRouteFilter(line) {
+	if (isGreenRoute(line)) return GREEN_BRANCH_ROUTES.join(",");
+	return line;
+}
+
+const MBTA_API_KEY = import.meta.env.VITE_MBTA_API_KEY;
+const directionNamesCache = new Map();
+const directionStopsCache = new Map();
 
 function getLineColor(line) {
+	if (String(line || "").startsWith("Green")) {
+		return "bg-[#00843D]";
+	}
+
 	switch (line) {
 		case "Blue":
 			return "bg-[#003DA5]";
 		case "Red":
 			return "bg-[#DA291C]";
-		case "Green":
-			return "bg-[#00843D]";
 		case "Orange":
 			return "bg-[#ED8B00]";
 		default:
@@ -231,9 +263,20 @@ export default function Arrivals({
 	onSelectionChange,
 	onLineSwitchRequest,
 }) {
+	const realtimeRouteFilter = useMemo(() => getRealtimeRouteFilter(line), [line]);
+	const [isPageVisible, setIsPageVisible] = useState(
+		typeof document === "undefined" ? true : document.visibilityState === "visible",
+	);
+	const [debouncedSelection, setDebouncedSelection] = useState({
+		line,
+		stop,
+		direction: String(direction ?? ""),
+		realtimeRouteFilter,
+	});
 	const [clock, setClock] = useState(getClockString());
 	const [predictions, setPredictions] = useState([]);
 	const [vehiclesById, setVehiclesById] = useState({});
+	const [alerts, setAlerts] = useState([]);
 	const [directionStops, setDirectionStops] = useState([
 		{ id: stop, attributes: { name: stopName } },
 	]);
@@ -242,7 +285,28 @@ export default function Arrivals({
 	useEffect(() => {
 		setPredictions([]);
 		setVehiclesById({});
+		setAlerts([]);
 	}, [direction, line, stop]);
+
+	useEffect(() => {
+		const handleVisibilityChange = () => {
+			setIsPageVisible(document.visibilityState === "visible");
+		};
+		document.addEventListener("visibilitychange", handleVisibilityChange);
+		return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+	}, []);
+
+	useEffect(() => {
+		const timeoutId = setTimeout(() => {
+			setDebouncedSelection({
+				line,
+				stop,
+				direction: String(direction ?? ""),
+				realtimeRouteFilter,
+			});
+		}, SELECTION_DEBOUNCE_MS);
+		return () => clearTimeout(timeoutId);
+	}, [line, stop, direction, realtimeRouteFilter]);
 
 	useEffect(() => {
 		const id = setInterval(() => setClock(getClockString()), 1000);
@@ -250,7 +314,14 @@ export default function Arrivals({
 	}, []);
 
 	useEffect(() => {
-		if (!line) return;
+		const selectedLine = debouncedSelection.line;
+		if (!selectedLine) return;
+		const cached = directionNamesCache.get(selectedLine);
+		if (cached) {
+			setDirectionNames(cached);
+			return;
+		}
+
 		const controller = new AbortController();
 
 		const fetchDirections = async () => {
@@ -259,12 +330,14 @@ export default function Arrivals({
 					"fields[route]": "direction_destinations",
 				});
 				const response = await fetch(
-					`https://api-v3.mbta.com/routes/${line}?${query.toString()}`,
+					`https://api-v3.mbta.com/routes/${selectedLine}?${query.toString()}`,
 					{ signal: controller.signal },
 				);
 				if (!response.ok) return;
 				const data = await response.json();
-				setDirectionNames(data?.data?.attributes?.direction_destinations ?? []);
+				const nextNames = data?.data?.attributes?.direction_destinations ?? [];
+				directionNamesCache.set(selectedLine, nextNames);
+				setDirectionNames(nextNames);
 			} catch (error) {
 				if (error.name !== "AbortError") {
 					console.error("Failed to fetch directions", error);
@@ -274,17 +347,26 @@ export default function Arrivals({
 
 		fetchDirections();
 		return () => controller.abort();
-	}, [line]);
+	}, [debouncedSelection.line]);
 
 	useEffect(() => {
-		if (!line || direction === undefined || direction === null || direction === "") return;
+		const selectedLine = debouncedSelection.line;
+		const selectedDirection = debouncedSelection.direction;
+		if (!selectedLine || selectedDirection === "") return;
+		const cacheKey = `${selectedLine}|${selectedDirection}`;
+		const cached = directionStopsCache.get(cacheKey);
+		if (cached) {
+			setDirectionStops(cached);
+			return;
+		}
+
 		const controller = new AbortController();
 
 		const fetchStops = async () => {
 			try {
 				const query = new URLSearchParams({
-					"filter[route]": line,
-					"filter[direction_id]": String(direction),
+					"filter[route]": selectedLine,
+					"filter[direction_id]": selectedDirection,
 					"fields[stop]": "name",
 					"page[limit]": "50",
 				});
@@ -293,7 +375,9 @@ export default function Arrivals({
 				});
 				if (!response.ok) return;
 				const data = await response.json();
-				setDirectionStops(data?.data ?? []);
+				const nextStops = data?.data ?? [];
+				directionStopsCache.set(cacheKey, nextStops);
+				setDirectionStops(nextStops);
 			} catch (error) {
 				if (error.name !== "AbortError") {
 					console.error("Failed to fetch stops", error);
@@ -303,23 +387,96 @@ export default function Arrivals({
 
 		fetchStops();
 		return () => controller.abort();
-	}, [line, direction]);
+	}, [debouncedSelection.line, debouncedSelection.direction]);
 
 	useEffect(() => {
-		if (!stop || !line || direction === undefined || direction === null || direction === "")
-			return;
+		const selectedLine = debouncedSelection.line;
+		const selectedStop = debouncedSelection.stop;
+		const selectedDirection = debouncedSelection.direction;
+		const selectedRouteFilter = debouncedSelection.realtimeRouteFilter;
+		if (!selectedLine || !selectedStop || selectedDirection === "") return;
+
+		let cancelled = false;
+		let timeoutId;
+		let failureCount = 0;
+
+		const scheduleNext = (delayMs) => {
+			if (cancelled) return;
+			timeoutId = setTimeout(runPoll, delayMs);
+		};
+
+		const runPoll = async () => {
+			if (cancelled) return;
+			if (!isPageVisible) {
+				scheduleNext(VISIBILITY_RECHECK_MS);
+				return;
+			}
+
+			try {
+				const query = new URLSearchParams({
+					"filter[route]": selectedRouteFilter,
+					"filter[stop]": selectedStop,
+					"filter[direction_id]": selectedDirection,
+					"filter[datetime]": "NOW",
+					"fields[alert]":
+						"effect,severity,short_header,header,lifecycle,informed_entity",
+					"page[limit]": "25",
+				});
+				const response = await fetch(`https://api-v3.mbta.com/alerts?${query.toString()}`);
+				if (!response.ok) {
+					const error = new Error(`Alert fetch failed: ${response.status}`);
+					error.status = response.status;
+					throw error;
+				}
+				const data = await response.json();
+				if (cancelled) return;
+				const nextAlerts = data?.data ?? [];
+				setAlerts(nextAlerts);
+				failureCount = 0;
+
+				const hasArrivalAlert = nextAlerts.some((alert) => {
+					const effect = String(alert?.attributes?.effect || "").toUpperCase();
+					return ALERT_EFFECTS_FOR_ARRIVALS.has(effect);
+				});
+				scheduleNext(hasArrivalAlert ? ALERT_POLL_ACTIVE_MS : ALERT_POLL_IDLE_MS);
+			} catch (error) {
+				if (cancelled) return;
+				failureCount += 1;
+				const backoffMs = Math.min(
+					POLL_BACKOFF_MAX_MS,
+					POLL_BACKOFF_BASE_MS * 2 ** (failureCount - 1),
+				);
+				console.error("Failed to fetch alerts", error);
+				scheduleNext(backoffMs);
+			}
+		};
+
+		runPoll();
+		return () => {
+			cancelled = true;
+			clearTimeout(timeoutId);
+		};
+	}, [debouncedSelection, isPageVisible]);
+
+	useEffect(() => {
+		const selectedLine = debouncedSelection.line;
+		const selectedStop = debouncedSelection.stop;
+		const selectedDirection = debouncedSelection.direction;
+		const selectedRouteFilter = debouncedSelection.realtimeRouteFilter;
+		if (!isPageVisible) return;
+		if (!selectedStop || !selectedLine || selectedDirection === "") return;
 
 		const query = new URLSearchParams({
-			"filter[stop]": stop,
-			"filter[direction_id]": String(direction),
-			"filter[route]": line,
+			"filter[stop]": selectedStop,
+			"filter[direction_id]": selectedDirection,
+			"filter[route]": selectedRouteFilter,
 			include: "vehicle",
 			sort: "arrival_time",
 			"fields[prediction]": "arrival_time,departure_time,status,stop_sequence",
 			"fields[vehicle]": "current_status,current_stop_sequence,current_stop_id",
 			"page[limit]": "5",
-			api_key: "a10b9724298d437792e206da4f0ec606",
 		});
+		if (MBTA_API_KEY) query.set("api_key", MBTA_API_KEY);
 
 		const streamUrl = `https://api-v3.mbta.com/predictions?${query.toString()}`;
 		const eventSource = new EventSource(streamUrl);
@@ -380,9 +537,10 @@ export default function Arrivals({
 			eventSource.removeEventListener("remove", onRemove);
 			eventSource.close();
 		};
-	}, [stop, direction, line]);
+	}, [debouncedSelection, isPageVisible]);
 
 	useEffect(() => {
+		if (!isPageVisible) return;
 		const vehicleIds = Array.from(
 			new Set(
 				predictions
@@ -391,11 +549,32 @@ export default function Arrivals({
 			),
 		);
 		if (vehicleIds.length === 0) return;
+		const needsRepair = vehicleIds.some((id) => {
+			const vehicle = vehiclesById[id];
+			if (!vehicle) return true;
+			return (
+				!vehicle._related_stop_id &&
+				!vehicle.current_stop_id &&
+				!Number.isFinite(Number(vehicle.current_stop_sequence))
+			);
+		});
+		if (!needsRepair) return;
 
-		const controller = new AbortController();
 		let cancelled = false;
+		let timeoutId;
+		let failureCount = 0;
 
-		const fetchVehicles = async () => {
+		const scheduleNext = (delayMs) => {
+			if (cancelled) return;
+			timeoutId = setTimeout(runPoll, delayMs);
+		};
+
+		const runPoll = async () => {
+			if (cancelled) return;
+			if (!isPageVisible) {
+				scheduleNext(VISIBILITY_RECHECK_MS);
+				return;
+			}
 			try {
 				const query = new URLSearchParams({
 					"filter[id]": vehicleIds.join(","),
@@ -404,10 +583,12 @@ export default function Arrivals({
 					"fields[stop]": "name",
 					"page[limit]": String(vehicleIds.length),
 				});
-				const response = await fetch(`https://api-v3.mbta.com/vehicles?${query.toString()}`, {
-					signal: controller.signal,
-				});
-				if (!response.ok || cancelled) return;
+				const response = await fetch(`https://api-v3.mbta.com/vehicles?${query.toString()}`);
+				if (!response.ok) {
+					const error = new Error(`Vehicle fetch failed: ${response.status}`);
+					error.status = response.status;
+					throw error;
+				}
 				const payload = await response.json();
 				if (cancelled) return;
 
@@ -428,22 +609,26 @@ export default function Arrivals({
 					};
 				});
 				setVehiclesById((prev) => ({ ...prev, ...nextMap }));
+				failureCount = 0;
+				scheduleNext(VEHICLE_BACKFILL_MS);
 			} catch (error) {
-				if (error.name !== "AbortError" && !cancelled) {
-					console.error("Failed to backfill vehicles", error);
-				}
+				if (cancelled) return;
+				failureCount += 1;
+				const backoffMs = Math.min(
+					POLL_BACKOFF_MAX_MS,
+					POLL_BACKOFF_BASE_MS * 2 ** (failureCount - 1),
+				);
+				console.error("Failed to backfill vehicles", error);
+				scheduleNext(backoffMs);
 			}
 		};
 
-		fetchVehicles();
-		const intervalId = setInterval(fetchVehicles, 10000);
-
+		runPoll();
 		return () => {
 			cancelled = true;
-			clearInterval(intervalId);
-			controller.abort();
+			clearTimeout(timeoutId);
 		};
-	}, [predictions]);
+	}, [predictions, vehiclesById, isPageVisible]);
 
 	const sortedPredictions = useMemo(() => {
 		return [...predictions].sort((a, b) => getArrivalSeconds(a) - getArrivalSeconds(b));
@@ -491,6 +676,7 @@ export default function Arrivals({
 				index: index + 1,
 				predictionId: prediction?.id ?? "n/a",
 				label: getArrivalLabel(prediction),
+				predictionRouteId: prediction?.relationships?.route?.data?.id ?? "n/a",
 				vehicleId,
 				currentStatus: vehicle?.current_status ?? "n/a",
 				relatedStopId: vehicle?._related_stop_id ?? "n/a",
@@ -504,7 +690,69 @@ export default function Arrivals({
 				placementSource: placement.placementSource ?? "unknown",
 			};
 		});
-	}, [incomingFivePredictions, vehiclesById, precedingStops, directionStops, currentStopIndex]);
+	}, [
+		incomingFivePredictions,
+		vehiclesById,
+			precedingStops,
+			directionStops,
+			currentStopIndex,
+		]);
+
+	const relevantAlerts = useMemo(() => {
+		return alerts.filter((alert) => {
+			const effect = String(alert?.attributes?.effect || "").toUpperCase();
+			return ALERT_EFFECTS_FOR_ARRIVALS.has(effect);
+		});
+	}, [alerts]);
+
+	const predictionHasAlertMap = useMemo(() => {
+		const allowGreenRouteEntity = isGreenRoute(line);
+		const isEntityMatch = (entity, prediction) => {
+			if (!entity) return false;
+			if (entity.route) {
+				if (allowGreenRouteEntity) {
+					if (!GREEN_BRANCH_ROUTES.includes(entity.route)) return false;
+				} else if (entity.route !== line) {
+					return false;
+				}
+			}
+			if (entity.stop && entity.stop !== stop) return false;
+			if (
+				entity.direction_id !== undefined &&
+				entity.direction_id !== null &&
+				String(entity.direction_id) !== String(direction)
+			) {
+				return false;
+			}
+			const tripId = prediction?.relationships?.trip?.data?.id;
+			if (entity.trip && entity.trip !== tripId) return false;
+			return true;
+		};
+
+		const map = {};
+		sortedPredictions.forEach((prediction) => {
+			const hasAlert = relevantAlerts.some((alert) => {
+				const informedEntities = alert?.attributes?.informed_entity ?? [];
+				if (!Array.isArray(informedEntities) || informedEntities.length === 0) {
+					return true;
+				}
+				return informedEntities.some((entity) => isEntityMatch(entity, prediction));
+			});
+			map[prediction.id] = hasAlert;
+		});
+		return map;
+	}, [sortedPredictions, relevantAlerts, line, stop, direction]);
+
+	const activeAlertHeadlines = useMemo(() => {
+		return relevantAlerts
+			.map((alert) => alert?.attributes?.short_header || alert?.attributes?.header)
+			.filter(Boolean)
+			.slice(0, 3);
+	}, [relevantAlerts]);
+
+	const hasAnyDisplayedTrainAlert = useMemo(() => {
+		return nextThreeTrains.some((train) => Boolean(predictionHasAlertMap[train.id]));
+	}, [nextThreeTrains, predictionHasAlertMap]);
 
 	const trackersBySlot = useMemo(() => {
 		const slots = {};
@@ -520,7 +768,9 @@ export default function Arrivals({
 
 		// in transit to OR stopped at
 		trackedPredictions.forEach((prediction) => {
-			const label = getArrivalLabel(prediction);
+			const label = getArrivalLabel(prediction, {
+				hasAlert: Boolean(predictionHasAlertMap[prediction.id]),
+			});
 			const vehicle = getVehicleForPrediction(prediction, vehiclesById);
 			const vehicleId = prediction?.relationships?.vehicle?.data?.id || "no-vehicle";
 			const placement = getPlacementFromVehicle(
@@ -593,12 +843,14 @@ export default function Arrivals({
 		directionStops,
 		nextThreeTrains,
 		precedingStops,
+		predictionHasAlertMap,
 		staticStopSlots,
 		vehiclesById,
 	]);
 
 	const handleStopSelect = (event) => {
 		const nextStopId = event.target.value;
+		if (nextStopId === stop) return;
 		const nextStop = directionStops.find((item) => item.id === nextStopId);
 		if (!nextStop) return;
 		onSelectionChange({
@@ -612,6 +864,7 @@ export default function Arrivals({
 
 	const handleDirectionSelect = (event) => {
 		const nextDirection = event.target.value;
+		if (String(nextDirection) === String(direction)) return;
 		const nextDirectionName = directionNames[Number(nextDirection)] || directionName;
 		onSelectionChange({
 			stop,
@@ -623,6 +876,7 @@ export default function Arrivals({
 	};
 
 	const lineColor = getLineColor(line);
+	const lineSelectorValue = String(line || "").startsWith("Green") ? "Green" : line;
 	const leftSlots = staticStopSlots.filter((slot) => slot.key !== "current");
 	const getLastKnownStation = (train) => {
 		const vehicleId = train?.relationships?.vehicle?.data?.id;
@@ -711,8 +965,11 @@ export default function Arrivals({
 							</div>
 						</div>
 
-					<div className="mt-4 flex items-center gap-2 text-2xl">
-							<select value={line} onChange={(event) => onLineSwitchRequest(event.target.value)}>
+						<div className="mt-4 flex items-center gap-2 text-2xl">
+							<select
+								value={lineSelectorValue}
+								onChange={(event) => onLineSwitchRequest(event.target.value)}
+							>
 								<option value="Red">Red line toward</option>
 								<option value="Blue">Blue line toward</option>
 								<option value="Orange">Orange line toward</option>
@@ -739,7 +996,7 @@ export default function Arrivals({
 							<div className="space-y-1">
 									{incomingFiveDebug.map((item) => (
 										<p key={item.predictionId} className="text-[11px] leading-[14px] font-mono">
-											{`#${item.index} pred:${item.predictionId} label:${item.label} vid:${item.vehicleId} status:${item.currentStatus} relStop:${item.relatedStopId} relName:${item.relatedStopName} stop:${item.currentStopId} src:${item.placementSource} vSeq:${item.currentStopSequence} pSeq:${item.predictionStopSequence} away:${item.stopsAway}`}
+											{`#${item.index} pred:${item.predictionId} route:${item.predictionRouteId} label:${item.label} vid:${item.vehicleId} status:${item.currentStatus} relStop:${item.relatedStopId} relName:${item.relatedStopName} stop:${item.currentStopId} src:${item.placementSource} vSeq:${item.currentStopSequence} pSeq:${item.predictionStopSequence} away:${item.stopsAway}`}
 										</p>
 									))}
 								{incomingFiveDebug.length === 0 && (
@@ -754,11 +1011,30 @@ export default function Arrivals({
 					<div className="w-[900px] border-t-4 border-black mx-auto mt-8" />
 
 						<div className="w-[1120px] mx-auto mt-7 space-y-4">
+							{(activeAlertHeadlines.length > 0 || hasAnyDisplayedTrainAlert) && (
+								<div className="mb-1 text-center">
+									{activeAlertHeadlines.length > 0 ? (
+										activeAlertHeadlines.map((headline, index) => (
+											<p
+												key={`${headline}-${index}`}
+												className="text-xs leading-4 text-red-700"
+											>
+												{headline}
+											</p>
+										))
+									) : (
+										<p className="text-xs leading-4 text-red-700">
+											Active service alert affecting arrivals at this stop.
+										</p>
+									)}
+								</div>
+							)}
 							{nextThreeTrains.map((train, index) => (
 								<Textbox
 									key={train.id}
 									train={train}
 									index={index}
+									hasAlert={Boolean(predictionHasAlertMap[train.id])}
 									lastKnownStopName={getLastKnownStation(train)}
 								/>
 							))}

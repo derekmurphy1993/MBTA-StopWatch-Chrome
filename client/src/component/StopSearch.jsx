@@ -1,25 +1,46 @@
 import { useState, useEffect } from "react";
 
+const stopSearchStopsCache = new Map();
+const stopSearchDirectionsCache = new Map();
+
 // eslint-disable-next-line react/prop-types
 export default function StopSearch({ handleStopData, initialLine = "" }) {
+	const [selectedLineFamily, setSelectedLineFamily] = useState(null);
+	const [selectedGreenBranch, setSelectedGreenBranch] = useState(null);
 	const [selectedLine, setSelectedLine] = useState(null);
 	const [selectedDirection, setSelectedDirection] = useState(null);
 	const [selectedStop, setSelectedStop] = useState(null);
 	const [selectedStopName, setSelectedStopName] = useState("");
-	// choices
 	const [stops, setStops] = useState(null);
 	const [directions, setDirections] = useState(null);
 	const [directionName, setDirectionName] = useState("");
-	// views
 	const [showDirection, setShowDirection] = useState(false);
 	const [showStop, setShowStop] = useState(false);
+	const [showBranch, setShowBranch] = useState(false);
 	const [showSubmit, setShowSubmit] = useState(false);
 	const [loading, setLoading] = useState(false);
-	// const [error, setError] = useState(null);
 
 	useEffect(() => {
 		if (!initialLine) return;
+		if (String(initialLine).startsWith("Green-")) {
+			setSelectedLineFamily("Green");
+			setSelectedGreenBranch(initialLine);
+			setSelectedLine(initialLine);
+			setShowBranch(true);
+			setShowStop(true);
+			return;
+		}
+		if (initialLine === "Green") {
+			setSelectedLineFamily("Green");
+			setSelectedGreenBranch(null);
+			setSelectedLine(null);
+			setShowBranch(true);
+			setShowStop(false);
+			return;
+		}
+		setSelectedLineFamily(initialLine);
 		setSelectedLine(initialLine);
+		setShowBranch(false);
 		setShowStop(true);
 	}, [initialLine]);
 
@@ -28,6 +49,11 @@ export default function StopSearch({ handleStopData, initialLine = "" }) {
 		const controller = new AbortController();
 
 		const fetchData = async () => {
+			const cached = stopSearchStopsCache.get(selectedLine);
+			if (cached) {
+				setStops(cached);
+				return;
+			}
 			try {
 				const query = new URLSearchParams({
 					"filter[route]": selectedLine,
@@ -39,6 +65,7 @@ export default function StopSearch({ handleStopData, initialLine = "" }) {
 				});
 				if (!stops.ok) return;
 				const data = await stops.json();
+				stopSearchStopsCache.set(selectedLine, data);
 				setStops(data);
 			} catch (error) {
 				if (error.name !== "AbortError") {
@@ -54,6 +81,11 @@ export default function StopSearch({ handleStopData, initialLine = "" }) {
 		}
 
 		const fetchDirection = async () => {
+			const cached = stopSearchDirectionsCache.get(selectedLine);
+			if (cached) {
+				setDirections(cached);
+				return;
+			}
 			try {
 				const query = new URLSearchParams({
 					"fields[route]": "direction_destinations",
@@ -64,6 +96,7 @@ export default function StopSearch({ handleStopData, initialLine = "" }) {
 				);
 				if (!directions.ok) return;
 				const data = await directions.json();
+				stopSearchDirectionsCache.set(selectedLine, data);
 				setDirections(data);
 			} catch (error) {
 				if (error.name !== "AbortError") {
@@ -80,6 +113,8 @@ export default function StopSearch({ handleStopData, initialLine = "" }) {
 	function handleSubmitLine(event) {
 		event.preventDefault();
 		setLoading(true);
+		setSelectedLineFamily("");
+		setSelectedGreenBranch(null);
 		setSelectedStopName("");
 		setSelectedStop(null);
 		setSelectedDirection("");
@@ -89,9 +124,36 @@ export default function StopSearch({ handleStopData, initialLine = "" }) {
 
 		setShowStop(false);
 		setShowDirection(false);
+		setShowSubmit(false);
 		const nextLine = event.target.value;
+		setSelectedLineFamily(nextLine);
+		if (nextLine === "Green") {
+			setSelectedLine(null);
+			setShowBranch(true);
+			setShowStop(false);
+			setLoading(false);
+			return;
+		}
+		setShowBranch(false);
 		setSelectedLine(nextLine);
 		setShowStop(true);
+		setLoading(false);
+	}
+
+	function handleSubmitGreenBranch(event) {
+		event.preventDefault();
+		const nextBranch = event.target.value;
+		setLoading(true);
+		setSelectedGreenBranch(nextBranch);
+		setSelectedLine(nextBranch);
+		setShowStop(true);
+		setShowDirection(false);
+		setShowSubmit(false);
+		setSelectedStop(null);
+		setSelectedStopName("");
+		setSelectedDirection("");
+		setDirectionName("");
+		setDirections(null);
 		setLoading(false);
 	}
 
@@ -117,14 +179,13 @@ export default function StopSearch({ handleStopData, initialLine = "" }) {
 	}
 
 	function subNewStop() {
-		console.log(selectedDirection);
 		setLoading(true);
 		handleStopData(
 			selectedStop,
 			selectedDirection,
 			directionName,
 			selectedStopName,
-			selectedLine
+			selectedLine,
 		);
 		setShowSubmit(false);
 		setLoading(false);
@@ -140,7 +201,7 @@ export default function StopSearch({ handleStopData, initialLine = "" }) {
 					className="flex flex-col items-center justify-center"
 				>
 					<select
-						value={selectedLine ?? ""}
+						value={selectedLineFamily ?? ""}
 						className="border-2 mt-4 border-slate-500 bg-slate-200 rounded-lg h-12 w-64 p-2"
 					>
 						<option value="" disabled className="text-slate-200">
@@ -149,11 +210,34 @@ export default function StopSearch({ handleStopData, initialLine = "" }) {
 						<option value="Red">Red</option>
 						<option value="Blue">Blue</option>
 						<option value="Orange">Orange</option>
-						<option disabled value="Green">
-							Green coming soon!
-						</option>
+						<option value="Green">Green</option>
 					</select>
 				</form>
+			)}
+			{!loading && showBranch && selectedLineFamily === "Green" && (
+				<div className="flex flex-col items-center justify-center">
+					<form
+						onChange={handleSubmitGreenBranch}
+						className="flex flex-col items-center justify-center"
+					>
+						<select
+							value={selectedGreenBranch ?? ""}
+							className="border-2 mt-4 border-slate-500 bg-slate-200 rounded-lg h-12 w-64 p-2"
+						>
+							<option value="" disabled className="text-slate-200">
+								Select Green Branch
+							</option>
+							<option value="Green-B">Green B</option>
+							<option value="Green-C">Green C</option>
+							<option value="Green-D">Green D</option>
+							<option value="Green-E">Green E</option>
+						</select>
+					</form>
+					<p className="text-xs text-slate-200 mt-2 text-center max-w-xs">
+						If you are heading towards Cambridge after Copley, any Green branch
+						selection is fine.
+					</p>
+				</div>
 			)}
 			{!loading && showStop && (
 				<form
@@ -193,7 +277,7 @@ export default function StopSearch({ handleStopData, initialLine = "" }) {
 										{" "}
 										{direction}{" "}
 									</option>
-								)
+								),
 							)}
 					</select>
 				</form>
