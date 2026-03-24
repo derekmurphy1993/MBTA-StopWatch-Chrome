@@ -30,6 +30,7 @@ function getClockString() {
 	return now.toLocaleTimeString("en-US", options);
 }
 
+// Apply incoming prediction to existing list
 function applyPredictionUpdate(prevPredictions, payload) {
 	const next = [...prevPredictions];
 	const index = next.findIndex((item) => item.id === payload.id);
@@ -41,6 +42,7 @@ function applyPredictionUpdate(prevPredictions, payload) {
 	return next;
 }
 
+// makes sure that the predictions list is always an array
 function extractPredictionsFromStream(payload) {
 	if (Array.isArray(payload?.data)) return payload.data;
 	if (Array.isArray(payload)) return payload;
@@ -48,22 +50,36 @@ function extractPredictionsFromStream(payload) {
 	return [];
 }
 
+// extracts the vehicle data
 function extractVehiclesMap(payload) {
 	const map = {};
+	const stopNamesById = {};
+	(payload?.included ?? [])
+		.filter((item) => item.type === "stop")
+		.forEach((item) => {
+			stopNamesById[item.id] = item.attributes?.name ?? null;
+		});
 	(payload?.included ?? [])
 		.filter((item) => item.type === "vehicle")
 		.forEach((item) => {
-			map[item.id] = item.attributes;
+			const relatedStopId = item.relationships?.stop?.data?.id ?? null;
+			map[item.id] = {
+				...item.attributes,
+				_related_stop_id: relatedStopId,
+				_related_stop_name: relatedStopId ? stopNamesById[relatedStopId] ?? null : null,
+			};
 		});
 	return map;
 }
 
+// returns attributes for that ID
 function getVehicleForPrediction(prediction, vehiclesById) {
 	const vehicleId = prediction?.relationships?.vehicle?.data?.id;
 	if (!vehicleId) return undefined;
 	return vehiclesById[vehicleId];
 }
 
+// determines where the tracker icon should be placed based on status and location
 function getPlacementFromVehicle(
 	prediction,
 	vehicle,
@@ -71,19 +87,51 @@ function getPlacementFromVehicle(
 	directionStops,
 	currentStopIndex,
 ) {
+	const toFiniteNumber = (value) => {
+		if (value === null || value === undefined || value === "") return null;
+		const parsed = Number(value);
+		return Number.isFinite(parsed) ? parsed : null;
+	};
+
+	// should this be current?
 	const furthestPrecedingKey = precedingStops[0]?.id || "current";
 	const outOfRangeResult = {
 		slotKey: furthestPrecedingKey,
 		isOutOfRange: true,
 		offsetRight: false,
+		placementSource: "unknown",
+		stopsAway: Number.POSITIVE_INFINITY,
 	};
-	const currentResult = { slotKey: "current", isOutOfRange: false, offsetRight: false };
+	const currentResult = {
+		slotKey: "current",
+		isOutOfRange: false,
+		offsetRight: false,
+		placementSource: "at_or_past_current",
+		stopsAway: 0,
+	};
 	const status = vehicle?.current_status;
 	const isInTransit = status === "IN_TRANSIT_TO";
-	const resolvePlacementFromStopsAway = (stopsAway, offsetRight = false) => {
+	const isIncomingAt = status === "INCOMING_AT";
+	const isStoppedAt = status === "STOPPED_AT";
+	const normalizeName = (name) => String(name ?? "").trim().toLowerCase();
+	const getStopIndexByName = (name) => {
+		const normalized = normalizeName(name);
+		if (!normalized) return -1;
+		return directionStops.findIndex(
+			(routeStop) => normalizeName(routeStop?.attributes?.name) === normalized,
+		);
+	};
+	const resolvePlacementFromStopsAway = (
+		stopsAway,
+		offsetRight = false,
+		placementSource = "sequence",
+	) => {
 		if (!Number.isFinite(stopsAway)) return outOfRangeResult;
+		// we should not see a train that is no longer there
 		if (stopsAway <= 0) return currentResult;
-		if (stopsAway > precedingStops.length) return outOfRangeResult;
+		if (stopsAway > precedingStops.length) {
+			return { ...outOfRangeResult, placementSource, stopsAway };
+		}
 
 		// precedingStops are ordered furthest -> nearest to current
 		const precedingIndex = precedingStops.length - stopsAway;
@@ -92,29 +140,60 @@ function getPlacementFromVehicle(
 			slotKey,
 			isOutOfRange: false,
 			offsetRight: offsetRight && slotKey !== "current",
+			placementSource,
+			stopsAway,
 		};
 	};
 
-	// Primary: use stop-sequence math to compute stops-away from the tracked stop.
-	const predictionStopSequence = Number(prediction?.attributes?.stop_sequence);
-	const vehicleStopSequence = Number(vehicle?.current_stop_sequence);
-	if (Number.isFinite(predictionStopSequence) && Number.isFinite(vehicleStopSequence)) {
-		const stopsAway = predictionStopSequence - vehicleStopSequence;
-		return resolvePlacementFromStopsAway(stopsAway, isInTransit);
-	}
-
-	// Fallback: derive relative distance from current_stop_id index.
-	const vehicleStopId = vehicle?.current_stop_id;
-	if (vehicleStopId && currentStopIndex >= 0) {
-		const vehicleStopIndex = directionStops.findIndex(
-			(routeStop) => routeStop.id === vehicleStopId,
-		);
-		if (vehicleStopIndex >= 0) {
-			const stopsAwayFromCurrent = currentStopIndex - vehicleStopIndex;
-			return resolvePlacementFromStopsAway(stopsAwayFromCurrent, isInTransit);
+	// Primary: relationship stop id is the most reliable anchor.
+	const relatedStopId = vehicle?._related_stop_id;
+	if (relatedStopId && currentStopIndex >= 0) {
+		const relatedStopIndex = directionStops.findIndex((routeStop) => routeStop.id === relatedStopId);
+		if (relatedStopIndex >= 0) {
+			const stopsAwayFromCurrent = currentStopIndex - relatedStopIndex;
+			const shouldOffsetRight = isInTransit && !isIncomingAt && !isStoppedAt;
+			return resolvePlacementFromStopsAway(
+				stopsAwayFromCurrent,
+				shouldOffsetRight,
+				"related_stop_id",
+			);
+		}
+		const relatedStopNameIndex = getStopIndexByName(vehicle?._related_stop_name);
+		if (relatedStopNameIndex >= 0) {
+			const stopsAwayFromCurrent = currentStopIndex - relatedStopNameIndex;
+			const shouldOffsetRight = isInTransit && !isIncomingAt && !isStoppedAt;
+			return resolvePlacementFromStopsAway(
+				stopsAwayFromCurrent,
+				shouldOffsetRight,
+				"related_stop_name",
+			);
 		}
 	}
 
+	// Secondary: current_stop_id as backup anchor when relationship stop is unavailable.
+	const currentStopId = vehicle?.current_stop_id;
+	if (currentStopId && currentStopIndex >= 0) {
+		const vehicleStopIndex = directionStops.findIndex((routeStop) => routeStop.id === currentStopId);
+		if (vehicleStopIndex >= 0) {
+			const stopsAwayFromCurrent = currentStopIndex - vehicleStopIndex;
+			const shouldOffsetRight = isInTransit && !isIncomingAt && !isStoppedAt;
+			return resolvePlacementFromStopsAway(
+				stopsAwayFromCurrent,
+				shouldOffsetRight,
+				"current_stop_id",
+			);
+		}
+	}
+
+	// Fallback: use stop-sequence math when current_stop_id is unavailable.
+	const predictionStopSequence = toFiniteNumber(prediction?.attributes?.stop_sequence);
+	const vehicleStopSequence = toFiniteNumber(vehicle?.current_stop_sequence);
+	if (predictionStopSequence !== null && vehicleStopSequence !== null) {
+		const stopsAway = predictionStopSequence - vehicleStopSequence;
+		return resolvePlacementFromStopsAway(stopsAway, isInTransit, "stop_sequence");
+	}
+
+	// Final fallback: unknown position -> out-of-range grouping.
 	return outOfRangeResult;
 }
 
@@ -124,14 +203,8 @@ function TrackerIcon({ tracker }) {
 
 	return (
 		<div className={`relative flex flex-col items-center ${sizeClass} ${shiftClass} pb-2`}>
-			{SHOW_TRACKER_DEBUG && tracker.debug && (
-				<p className="text-[9px] leading-[10px] text-black/80 text-center mb-1 whitespace-pre-line">
-					{tracker.debug}
-					{`\nidx:${tracker.trackerIdx ?? "-"}`}
-				</p>
-			)}
 			<p
-				className={`text-2xl leading-none mb-2 ${tracker.isDueCollapsed ? "font-bold" : "font-normal"}`}
+				className={`text-2xl leading-none mb-2 whitespace-nowrap ${tracker.isDueCollapsed ? "font-bold" : "font-normal"}`}
 			>
 				{tracker.label}
 			</p>
@@ -146,7 +219,6 @@ TrackerIcon.propTypes = {
 		offsetRight: PropTypes.bool,
 		isDueCollapsed: PropTypes.bool,
 		debug: PropTypes.string,
-		trackerIdx: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
 	}).isRequired,
 };
 
@@ -157,17 +229,20 @@ export default function Arrivals({
 	directionName,
 	line,
 	onSelectionChange,
+	onLineSwitchRequest,
 }) {
 	const [clock, setClock] = useState(getClockString());
 	const [predictions, setPredictions] = useState([]);
 	const [vehiclesById, setVehiclesById] = useState({});
-	const [directionStops, setDirectionStops] = useState([]);
-	const [directionNames, setDirectionNames] = useState([]);
+	const [directionStops, setDirectionStops] = useState([
+		{ id: stop, attributes: { name: stopName } },
+	]);
+	const [directionNames, setDirectionNames] = useState([directionName]);
 
 	useEffect(() => {
 		setPredictions([]);
 		setVehiclesById({});
-	}, [stop, direction, line]);
+	}, [direction, line, stop]);
 
 	useEffect(() => {
 		const id = setInterval(() => setClock(getClockString()), 1000);
@@ -198,7 +273,6 @@ export default function Arrivals({
 		};
 
 		fetchDirections();
-
 		return () => controller.abort();
 	}, [line]);
 
@@ -228,7 +302,6 @@ export default function Arrivals({
 		};
 
 		fetchStops();
-
 		return () => controller.abort();
 	}, [line, direction]);
 
@@ -244,7 +317,7 @@ export default function Arrivals({
 			sort: "arrival_time",
 			"fields[prediction]": "arrival_time,departure_time,status,stop_sequence",
 			"fields[vehicle]": "current_status,current_stop_sequence,current_stop_id",
-			"page[limit]": "20",
+			"page[limit]": "5",
 			api_key: "a10b9724298d437792e206da4f0ec606",
 		});
 
@@ -266,7 +339,11 @@ export default function Arrivals({
 			if (payload?.type === "vehicle") {
 				setVehiclesById((prev) => ({
 					...prev,
-					[payload.id]: payload.attributes,
+					[payload.id]: {
+						...(prev[payload.id] ?? {}),
+						...payload.attributes,
+						_related_stop_id: payload.relationships?.stop?.data?.id ?? null,
+					},
 				}));
 				return;
 			}
@@ -315,45 +392,56 @@ export default function Arrivals({
 		);
 		if (vehicleIds.length === 0) return;
 
+		const controller = new AbortController();
 		let cancelled = false;
 
-		const refreshVehicles = async () => {
-			const controller = new AbortController();
+		const fetchVehicles = async () => {
 			try {
 				const query = new URLSearchParams({
 					"filter[id]": vehicleIds.join(","),
-					"fields[vehicle]": "current_status,current_stop_sequence,current_stop_id",
+					"fields[vehicle]": "current_status,current_stop_id,current_stop_sequence",
+					include: "stop",
+					"fields[stop]": "name",
+					"page[limit]": String(vehicleIds.length),
 				});
-				const response = await fetch(
-					`https://api-v3.mbta.com/vehicles?${query.toString()}`,
-					{
-						signal: controller.signal,
-					},
-				);
+				const response = await fetch(`https://api-v3.mbta.com/vehicles?${query.toString()}`, {
+					signal: controller.signal,
+				});
 				if (!response.ok || cancelled) return;
-				const data = await response.json();
+				const payload = await response.json();
 				if (cancelled) return;
 
+				const stopNamesById = {};
+				(payload?.included ?? [])
+					.filter((item) => item.type === "stop")
+					.forEach((item) => {
+						stopNamesById[item.id] = item.attributes?.name ?? null;
+					});
+
 				const nextMap = {};
-				(data?.data ?? []).forEach((vehicle) => {
-					nextMap[vehicle.id] = vehicle.attributes;
+				(payload?.data ?? []).forEach((vehicle) => {
+					const relatedStopId = vehicle.relationships?.stop?.data?.id ?? null;
+					nextMap[vehicle.id] = {
+						...vehicle.attributes,
+						_related_stop_id: relatedStopId,
+						_related_stop_name: relatedStopId ? stopNamesById[relatedStopId] ?? null : null,
+					};
 				});
 				setVehiclesById((prev) => ({ ...prev, ...nextMap }));
 			} catch (error) {
 				if (error.name !== "AbortError" && !cancelled) {
-					console.error("Failed to refresh vehicles", error);
+					console.error("Failed to backfill vehicles", error);
 				}
 			}
-
-			return () => controller.abort();
 		};
 
-		refreshVehicles();
-		const intervalId = setInterval(refreshVehicles, 10000);
+		fetchVehicles();
+		const intervalId = setInterval(fetchVehicles, 10000);
 
 		return () => {
 			cancelled = true;
 			clearInterval(intervalId);
+			controller.abort();
 		};
 	}, [predictions]);
 
@@ -362,6 +450,7 @@ export default function Arrivals({
 	}, [predictions]);
 
 	const nextThreeTrains = sortedPredictions.slice(0, 3);
+	const incomingFivePredictions = sortedPredictions.slice(0, 5);
 
 	const currentStopIndex = useMemo(() => {
 		return directionStops.findIndex((routeStop) => routeStop.id === stop);
@@ -381,6 +470,42 @@ export default function Arrivals({
 		return slots;
 	}, [precedingStops, stopName]);
 
+	const incomingFiveDebug = useMemo(() => {
+		return incomingFivePredictions.map((prediction, index) => {
+			const vehicleId = prediction?.relationships?.vehicle?.data?.id || "no-vehicle";
+			const vehicle = vehicleId !== "no-vehicle" ? vehiclesById[vehicleId] : undefined;
+			const predictionSequence = Number(prediction?.attributes?.stop_sequence);
+			const vehicleSequence = Number(vehicle?.current_stop_sequence);
+			const placement = getPlacementFromVehicle(
+				prediction,
+				vehicle,
+				precedingStops,
+				directionStops,
+				currentStopIndex,
+			);
+			const stopsAway =
+				Number.isFinite(predictionSequence) && Number.isFinite(vehicleSequence)
+					? predictionSequence - vehicleSequence
+					: null;
+			return {
+				index: index + 1,
+				predictionId: prediction?.id ?? "n/a",
+				label: getArrivalLabel(prediction),
+				vehicleId,
+				currentStatus: vehicle?.current_status ?? "n/a",
+				relatedStopId: vehicle?._related_stop_id ?? "n/a",
+				relatedStopName: vehicle?._related_stop_name ?? "n/a",
+				currentStopId: vehicle?.current_stop_id ?? "n/a",
+				currentStopSequence: Number.isFinite(vehicleSequence) ? vehicleSequence : "n/a",
+				predictionStopSequence: Number.isFinite(predictionSequence)
+					? predictionSequence
+					: "n/a",
+				stopsAway: stopsAway ?? "n/a",
+				placementSource: placement.placementSource ?? "unknown",
+			};
+		});
+	}, [incomingFivePredictions, vehiclesById, precedingStops, directionStops, currentStopIndex]);
+
 	const trackersBySlot = useMemo(() => {
 		const slots = {};
 		staticStopSlots.forEach((slot) => {
@@ -393,7 +518,8 @@ export default function Arrivals({
 		const nearestPrecedingKey = precedingStops[precedingStops.length - 1]?.id;
 		const trackedPredictions = nextThreeTrains;
 
-		trackedPredictions.forEach((prediction, trackerIdx) => {
+		// in transit to OR stopped at
+		trackedPredictions.forEach((prediction) => {
 			const label = getArrivalLabel(prediction);
 			const vehicle = getVehicleForPrediction(prediction, vehiclesById);
 			const vehicleId = prediction?.relationships?.vehicle?.data?.id || "no-vehicle";
@@ -408,11 +534,14 @@ export default function Arrivals({
 				placement.slotKey === "current" && vehicle?.current_status === "IN_TRANSIT_TO";
 			const isTransitFromNearestPreceding =
 				placement.slotKey === nearestPrecedingKey && placement.offsetRight;
+			const isOneStopAwayInTransit =
+				placement.stopsAway === 1 && placement.offsetRight;
 
 			if (
 				label === "DUE" ||
 				isTransitAtCurrent ||
-				isTransitFromNearestPreceding
+				isTransitFromNearestPreceding ||
+				isOneStopAwayInTransit
 			) {
 				dueTrains.push(prediction);
 				return;
@@ -426,8 +555,7 @@ export default function Arrivals({
 				label,
 				offsetRight: placement.offsetRight,
 				isDueCollapsed: false,
-				trackerIdx,
-				debug: `vid:${vehicleId}\nslot:${placement.slotKey}\nstatus:${vehicle?.current_status || "n/a"}\noff:${placement.offsetRight ? "Y" : "N"}`,
+				debug: `vid:${vehicleId}\nslot:${placement.slotKey}\nsource:${placement.placementSource || "unknown"}\nstatus:${vehicle?.current_status || "n/a"}\nrel:${vehicle?._related_stop_id || "n/a"}\noff:${placement.offsetRight ? "Y" : "N"}`,
 			});
 		});
 
@@ -444,7 +572,6 @@ export default function Arrivals({
 					: "DELAYED, SEE ALERT",
 				offsetRight: false,
 				isDueCollapsed: false,
-				trackerIdx: "group",
 				debug: `group:out-of-range\ncount:${outOfRangePredictions.length}\nslot:${furthestPrecedingKey}`,
 			});
 		}
@@ -455,7 +582,6 @@ export default function Arrivals({
 					label: "DUE",
 					offsetRight: false,
 					isDueCollapsed: true,
-					trackerIdx: "group",
 					debug: `group:DUE\ncount:${dueTrains.length}\nslot:current`,
 				},
 			];
@@ -498,18 +624,28 @@ export default function Arrivals({
 
 	const lineColor = getLineColor(line);
 	const leftSlots = staticStopSlots.filter((slot) => slot.key !== "current");
-	const furthestPrecedingKey = precedingStops[0]?.id || "current";
-	const nearestPrecedingKey = precedingStops[precedingStops.length - 1]?.id || "current";
+	const getLastKnownStation = (train) => {
+		const vehicleId = train?.relationships?.vehicle?.data?.id;
+		if (!vehicleId) return "Last known station unavailable";
+		const vehicle = vehiclesById[vehicleId];
+		if (!vehicle) return "Last known station unavailable";
+		if (vehicle._related_stop_name) return vehicle._related_stop_name;
+		if (!vehicle._related_stop_id) return "Last known station unavailable";
+		return (
+			directionStops.find((routeStop) => routeStop.id === vehicle._related_stop_id)?.attributes
+				?.name ?? "Last known station unavailable"
+		);
+	};
 
 	return (
 		<div className="w-full overflow-x-auto py-6">
 			<div className="w-[1190px] h-[800px] max-w-none bg-[#d5d5d5] border-4 border-black mx-auto relative px-10">
 				<div className="pt-8 px-2">
-						<div className="relative h-[165px]">
-							<div className="absolute left-0 right-0 top-[106px] border-t-4 border-black" />
-							<div className="absolute right-0 top-[106px] -translate-y-1/2 w-12 flex flex-col items-center">
-								<div className="w-12 h-12 rounded-full border-4 border-black bg-[#d5d5d5]" />
-								<p className="absolute top-[58px] w-24 text-center text-[10px] leading-[12px]">
+					<div className="relative h-[165px]">
+						<div className="absolute left-0 right-0 top-[106px] border-t-4 border-black" />
+						<div className="absolute right-0 top-[106px] -translate-y-1/2 w-12 flex flex-col items-center">
+							<div className="w-12 h-12 rounded-full border-4 border-black bg-[#d5d5d5]" />
+							<p className="absolute top-[58px] w-24 text-center text-[10px] leading-[12px]">
 								{directionName || "Direction"}
 							</p>
 						</div>
@@ -536,17 +672,6 @@ export default function Arrivals({
 									<p className="absolute top-[58px] w-24 text-center text-[10px] leading-[12px]">
 										{slot.name}
 									</p>
-									{SHOW_TRACKER_DEBUG && (
-										<p className="absolute top-[84px] w-32 text-center text-[9px] leading-[10px] text-black/80">
-											{`slot:${slot.key}`}
-											<br />
-											{slot.key === furthestPrecedingKey
-												? "role:furthestPrecedingKey"
-												: slot.key === nearestPrecedingKey
-													? "role:nearestPrecedingKey"
-													: "role:preceding"}
-										</p>
-									)}
 								</div>
 							))}
 						</div>
@@ -566,13 +691,6 @@ export default function Arrivals({
 										<TrackerIcon key={`current-${index}`} tracker={tracker} />
 									))}
 							</div>
-							{SHOW_TRACKER_DEBUG && (
-								<p className="absolute -bottom-[28px] text-[9px] leading-[10px] text-black/80 text-center">
-									slot:current
-									<br />
-									role:current
-								</p>
-							)}
 						</div>
 					</div>
 
@@ -593,9 +711,9 @@ export default function Arrivals({
 							</div>
 						</div>
 
-						<div className="mt-4 flex items-center gap-2 text-2xl">
-							<select>
-								<option value="Red">Red line toward</option>s
+					<div className="mt-4 flex items-center gap-2 text-2xl">
+							<select value={line} onChange={(event) => onLineSwitchRequest(event.target.value)}>
+								<option value="Red">Red line toward</option>
 								<option value="Blue">Blue line toward</option>
 								<option value="Orange">Orange line toward</option>
 								<option value="Green">Green line toward</option>
@@ -615,13 +733,35 @@ export default function Arrivals({
 							</div>
 						</div>
 					</div>
+					{SHOW_TRACKER_DEBUG && (
+						<div className="mt-4 w-[1120px] mx-auto border border-black bg-white p-3">
+							<p className="text-sm font-semibold mb-2">Incoming 5 Predictions Debug</p>
+							<div className="space-y-1">
+									{incomingFiveDebug.map((item) => (
+										<p key={item.predictionId} className="text-[11px] leading-[14px] font-mono">
+											{`#${item.index} pred:${item.predictionId} label:${item.label} vid:${item.vehicleId} status:${item.currentStatus} relStop:${item.relatedStopId} relName:${item.relatedStopName} stop:${item.currentStopId} src:${item.placementSource} vSeq:${item.currentStopSequence} pSeq:${item.predictionStopSequence} away:${item.stopsAway}`}
+										</p>
+									))}
+								{incomingFiveDebug.length === 0 && (
+									<p className="text-[11px] leading-[14px] font-mono">
+										No prediction debug data available.
+									</p>
+								)}
+							</div>
+						</div>
+					)}
 
 					<div className="w-[900px] border-t-4 border-black mx-auto mt-8" />
 
-					<div className="w-[1120px] mx-auto mt-7 space-y-4">
-						{nextThreeTrains.map((train, index) => (
-							<Textbox key={train.id} train={train} index={index} />
-						))}
+						<div className="w-[1120px] mx-auto mt-7 space-y-4">
+							{nextThreeTrains.map((train, index) => (
+								<Textbox
+									key={train.id}
+									train={train}
+									index={index}
+									lastKnownStopName={getLastKnownStation(train)}
+								/>
+							))}
 						{nextThreeTrains.length === 0 && (
 							<div className="w-full h-[170px] border border-black bg-white flex items-center justify-center">
 								<p className="text-5xl">No active predictions</p>
@@ -641,4 +781,5 @@ Arrivals.propTypes = {
 	directionName: PropTypes.string.isRequired,
 	line: PropTypes.string.isRequired,
 	onSelectionChange: PropTypes.func.isRequired,
+	onLineSwitchRequest: PropTypes.func.isRequired,
 };
